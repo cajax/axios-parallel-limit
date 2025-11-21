@@ -57,4 +57,4 @@ This library wraps the Axios adapter to intercept the actual request execution. 
 
 ## License
 
-ISC
+MIT

@@ -85,4 +85,46 @@ describe('axiosParallelLimit', () => {
 
         await expect(instance.get('/error')).rejects.toThrow();
     });
+
+    test('should track active requests throughout the queue processing', async () => {
+        const maxRequests = 2;
+        const activeCounts: number[] = [];
+
+        axiosParallelLimit(instance, {
+            maxRequests,
+            onActiveCountChange: (count) => activeCounts.push(count)
+        });
+
+        // Each request takes 50ms
+        mock.onGet('/test').reply(async () => {
+            await new Promise(r => setTimeout(r, 50));
+            return [200, 'ok'];
+        });
+
+        // Fire 5 requests
+        const promises = [];
+        for (let i = 0; i < 5; i++) {
+            promises.push(instance.get('/test'));
+        }
+
+        // Wait a bit for the first batch to start
+        await new Promise(r => setTimeout(r, 10));
+
+        // Should be saturated at 2
+        expect(activeCounts[activeCounts.length - 1]).toBe(2);
+
+        // Wait for all to finish
+        await Promise.all(promises);
+
+        // Should be back to 0
+        expect(activeCounts[activeCounts.length - 1]).toBe(0);
+
+        // Verify we hit the limit but didn't exceed it
+        const maxSeen = Math.max(...activeCounts);
+        expect(maxSeen).toBe(2);
+
+        // Verify we saw saturation multiple times (indicating sustained load)
+        const saturatedCounts = activeCounts.filter(c => c === 2).length;
+        expect(saturatedCounts).toBeGreaterThan(1);
+    });
 });
