@@ -1,6 +1,6 @@
 {
   "name": "@cajax/axios-parallel-limit",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Limit parallel requests in Axios",
   "type": "module",
   "main": "dist/index.cjs",
