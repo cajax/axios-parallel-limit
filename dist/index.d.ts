@@ -1,5 +1,6 @@
 import { AxiosInstance } from 'axios';
-export interface AxiosParallelLimitOptions {
+
+interface AxiosParallelLimitOptions {
     /**
      * The maximum number of parallel requests.
      */
@@ -18,4 +19,6 @@ export interface AxiosParallelLimitOptions {
  * @param axiosInstance The Axios instance to apply the limit to.
  * @param options Configuration options.
  */
-export declare function axiosParallelLimit(axiosInstance: AxiosInstance, options: AxiosParallelLimitOptions): void;
+declare function axiosParallelLimit(axiosInstance: AxiosInstance, options: AxiosParallelLimitOptions): void;
+
+export { type AxiosParallelLimitOptions, axiosParallelLimit };
