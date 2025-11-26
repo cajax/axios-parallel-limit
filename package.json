@@ -1,0 +1,60 @@
+{
+  "name": "@cajax/axios-parallel-limit",
+  "version": "1.0.1",
+  "description": "Limit parallel requests in Axios",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "build": "tsup"
+  },
+  "keywords": [
+    "axios",
+    "parallel",
+    "limit",
+    "request",
+    "http",
+    "https",
+    "rest",
+    "api"
+  ],
+  "author": "cajax",
+  "bugs": {
+    "url": "https://github.com/cajax/axios-parallel-limit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cajax/axios-parallel-limit.git"
+  },
+  "homepage": "https://github.com/cajax/axios-parallel-limit",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.13.2"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.10.1",
+    "axios-mock-adapter": "^2.1.0",
+    "jest": "^30.2.0",
+    "p-limit": "^7.2.0",
+    "ts-jest": "^29.4.5",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  },
+  "directories": {
+    "example": "examples",
+    "test": "test"
+  }
+}
