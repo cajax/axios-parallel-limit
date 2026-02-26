@@ -5,7 +5,7 @@ A lightweight Axios wrapper that limits the number of parallel requests using `p
 ## Installation
 
 ```bash
-npm install axios-parallel-limit
+npm install @cajax/axios-parallel-limit
 ```
 
 ## Usage
