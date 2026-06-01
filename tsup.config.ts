@@ -7,5 +7,4 @@ export default defineConfig({
     splitting: false,
     sourcemap: true,
     clean: true,
-    noExternal: ['p-limit'], // Bundle p-limit
 });

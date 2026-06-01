@@ -1,179 +1,187 @@
-var __defProp = Object.defineProperty;
-var __typeError = (msg) => {
-  throw TypeError(msg);
-};
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
-var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
-var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
-var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
-var __privateWrapper = (obj, member, setter, getter) => ({
-  set _(value) {
-    __privateSet(obj, member, value, setter);
-  },
-  get _() {
-    return __privateGet(obj, member, getter);
-  }
-});
-
 // src/index.ts
-import axios from "axios";
-
-// node_modules/yocto-queue/index.js
-var Node = class {
-  constructor(value) {
-    __publicField(this, "value");
-    __publicField(this, "next");
-    this.value = value;
+import axios, {
+  CanceledError
+} from "axios";
+var QUEUE_TIMEOUT_CODE = "ERR_QUEUE_TIMEOUT";
+var QUEUE_FULL_CODE = "ERR_QUEUE_FULL";
+var QueueTimeoutError = class _QueueTimeoutError extends Error {
+  constructor(config, message) {
+    super(message ?? "Request timed out while waiting in the queue for an available slot (queueTimeout)");
+    /** Stable, machine-checkable discriminant. */
+    this.code = QUEUE_TIMEOUT_CODE;
+    this.name = "QueueTimeoutError";
+    this.config = config;
+    Object.setPrototypeOf(this, _QueueTimeoutError.prototype);
   }
 };
-var _head, _tail, _size;
-var Queue = class {
-  constructor() {
-    __privateAdd(this, _head);
-    __privateAdd(this, _tail);
-    __privateAdd(this, _size);
-    this.clear();
-  }
-  enqueue(value) {
-    const node = new Node(value);
-    if (__privateGet(this, _head)) {
-      __privateGet(this, _tail).next = node;
-      __privateSet(this, _tail, node);
-    } else {
-      __privateSet(this, _head, node);
-      __privateSet(this, _tail, node);
-    }
-    __privateWrapper(this, _size)._++;
-  }
-  dequeue() {
-    const current = __privateGet(this, _head);
-    if (!current) {
-      return;
-    }
-    __privateSet(this, _head, __privateGet(this, _head).next);
-    __privateWrapper(this, _size)._--;
-    if (!__privateGet(this, _head)) {
-      __privateSet(this, _tail, void 0);
-    }
-    return current.value;
-  }
-  peek() {
-    if (!__privateGet(this, _head)) {
-      return;
-    }
-    return __privateGet(this, _head).value;
-  }
-  clear() {
-    __privateSet(this, _head, void 0);
-    __privateSet(this, _tail, void 0);
-    __privateSet(this, _size, 0);
-  }
-  get size() {
-    return __privateGet(this, _size);
-  }
-  *[Symbol.iterator]() {
-    let current = __privateGet(this, _head);
-    while (current) {
-      yield current.value;
-      current = current.next;
-    }
-  }
-  *drain() {
-    while (__privateGet(this, _head)) {
-      yield this.dequeue();
-    }
+var QueueFullError = class _QueueFullError extends Error {
+  constructor(config, message) {
+    super(message ?? "Request rejected because the queue is full (maxQueueSize reached)");
+    /** Stable, machine-checkable discriminant. */
+    this.code = QUEUE_FULL_CODE;
+    this.name = "QueueFullError";
+    this.config = config;
+    Object.setPrototypeOf(this, _QueueFullError.prototype);
   }
 };
-_head = new WeakMap();
-_tail = new WeakMap();
-_size = new WeakMap();
-
-// node_modules/p-limit/index.js
-function pLimit(concurrency) {
-  validateConcurrency(concurrency);
-  const queue = new Queue();
-  let activeCount = 0;
-  const resumeNext = () => {
-    if (activeCount < concurrency && queue.size > 0) {
-      activeCount++;
-      queue.dequeue()();
-    }
-  };
-  const next = () => {
-    activeCount--;
-    resumeNext();
-  };
-  const run = async (function_, resolve, arguments_) => {
-    const result = (async () => function_(...arguments_))();
-    resolve(result);
-    try {
-      await result;
-    } catch {
-    }
-    next();
-  };
-  const enqueue = (function_, resolve, arguments_) => {
-    new Promise((internalResolve) => {
-      queue.enqueue(internalResolve);
-    }).then(run.bind(void 0, function_, resolve, arguments_));
-    if (activeCount < concurrency) {
-      resumeNext();
-    }
-  };
-  const generator = (function_, ...arguments_) => new Promise((resolve) => {
-    enqueue(function_, resolve, arguments_);
-  });
-  Object.defineProperties(generator, {
-    activeCount: {
-      get: () => activeCount
-    },
-    pendingCount: {
-      get: () => queue.size
-    },
-    clearQueue: {
-      value() {
-        queue.clear();
-      }
-    },
-    concurrency: {
-      get: () => concurrency,
-      set(newConcurrency) {
-        validateConcurrency(newConcurrency);
-        concurrency = newConcurrency;
-        queueMicrotask(() => {
-          while (activeCount < concurrency && queue.size > 0) {
-            resumeNext();
-          }
-        });
-      }
-    },
-    map: {
-      async value(iterable, function_) {
-        const promises = Array.from(iterable, (value, index) => this(function_, value, index));
-        return Promise.all(promises);
-      }
-    }
-  });
-  return generator;
+function isQueueTimeoutError(err) {
+  return err instanceof QueueTimeoutError || typeof err === "object" && err !== null && err.code === QUEUE_TIMEOUT_CODE && err.name === "QueueTimeoutError";
 }
-function validateConcurrency(concurrency) {
-  if (!((Number.isInteger(concurrency) || concurrency === Number.POSITIVE_INFINITY) && concurrency > 0)) {
-    throw new TypeError("Expected `concurrency` to be a number from 1 and up");
-  }
+function isQueueFullError(err) {
+  return err instanceof QueueFullError || typeof err === "object" && err !== null && err.code === QUEUE_FULL_CODE && err.name === "QueueFullError";
 }
-
-// src/index.ts
+var now = () => Date.now();
 function axiosParallelLimit(axiosInstance, options) {
-  const limit = pLimit(options.maxRequests);
-  const notify = () => {
-    if (options.onActiveCountChange) {
-      options.onActiveCountChange(limit.activeCount);
+  const { maxRequests, maxQueueSize } = options;
+  const queue = [];
+  let active = 0;
+  const notifyActive = () => options.onActiveCountChange?.(active);
+  const notifyPending = () => options.onPendingCountChange?.(queue.length);
+  const emit = (cb, config, waitMs, queueSize) => {
+    cb?.({ config, waitMs, queueSize });
+  };
+  const effectiveTimeout = (config) => {
+    const perRequest = config.queueTimeout;
+    return typeof perRequest === "number" ? perRequest : options.queueTimeout;
+  };
+  const cancelError = (config) => (
+    // Axios's runtime CanceledError ctor is (message, config, request); its
+    // published type inherits AxiosError's (message, code, config, ...), so we
+    // cast the positional `config` to satisfy the type while staying correct at
+    // runtime (sets code ERR_CANCELED, the __CANCEL__ marker, and attaches config).
+    new CanceledError(void 0, config)
+  );
+  const alreadyAbortedError = (config) => {
+    const signal = config.signal;
+    if (signal && signal.aborted) {
+      return cancelError(config);
     }
-    if (options.onPendingCountChange) {
-      options.onPendingCountChange(limit.pendingCount);
+    const token = config.cancelToken;
+    if (token && token.reason) {
+      return token.reason;
     }
+    return void 0;
+  };
+  const attachAbort = (config, onAbort2) => {
+    const detachers = [];
+    const signal = config.signal;
+    if (signal && typeof signal.addEventListener === "function") {
+      const handler = () => onAbort2();
+      signal.addEventListener("abort", handler);
+      detachers.push(() => {
+        if (typeof signal.removeEventListener === "function") {
+          signal.removeEventListener("abort", handler);
+        }
+      });
+    }
+    const token = config.cancelToken;
+    if (token && typeof token.subscribe === "function") {
+      const handler = () => onAbort2();
+      token.subscribe(handler);
+      detachers.push(() => token.unsubscribe?.(handler));
+    } else if (token && token.promise && typeof token.promise.then === "function") {
+      let live = true;
+      token.promise.then(
+        () => {
+          if (live) onAbort2();
+        },
+        () => {
+        }
+      );
+      detachers.push(() => {
+        live = false;
+      });
+    }
+    return () => {
+      for (const detach of detachers) detach();
+    };
+  };
+  const clearItem = (item) => {
+    if (item.timer !== void 0) {
+      clearTimeout(item.timer);
+      item.timer = void 0;
+    }
+    if (item.detachAbort) {
+      item.detachAbort();
+      item.detachAbort = void 0;
+    }
+  };
+  const removeFromQueue = (item) => {
+    const index = queue.indexOf(item);
+    if (index === -1) return false;
+    queue.splice(index, 1);
+    return true;
+  };
+  const makeRelease = () => {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      active--;
+      notifyActive();
+      pullNext();
+    };
+  };
+  const pullNext = () => {
+    if (active >= maxRequests) return;
+    const item = queue.shift();
+    if (!item) return;
+    item.settled = true;
+    clearItem(item);
+    notifyPending();
+    active++;
+    notifyActive();
+    emit(options.onDispatch, item.config, now() - item.enqueuedAt, queue.length);
+    item.resolve(makeRelease());
+  };
+  const onTimeout = (item) => {
+    if (item.settled) return;
+    item.settled = true;
+    clearItem(item);
+    if (!removeFromQueue(item)) return;
+    notifyPending();
+    emit(options.onQueueTimeout, item.config, now() - item.enqueuedAt, queue.length);
+    item.reject(new QueueTimeoutError(item.config));
+  };
+  const onAbort = (item) => {
+    if (item.settled) return;
+    item.settled = true;
+    clearItem(item);
+    if (!removeFromQueue(item)) return;
+    notifyPending();
+    item.reject(cancelError(item.config));
+  };
+  const acquire = (config) => {
+    if (active < maxRequests) {
+      active++;
+      notifyActive();
+      emit(options.onDispatch, config, 0, queue.length);
+      return Promise.resolve(makeRelease());
+    }
+    const aborted = alreadyAbortedError(config);
+    if (aborted !== void 0) {
+      return Promise.reject(aborted);
+    }
+    if (maxQueueSize !== void 0 && queue.length >= maxQueueSize) {
+      emit(options.onQueueOverflow, config, 0, queue.length);
+      return Promise.reject(new QueueFullError(config));
+    }
+    return new Promise((resolve, reject) => {
+      const item = {
+        config,
+        enqueuedAt: now(),
+        settled: false,
+        resolve,
+        reject
+      };
+      const timeout = effectiveTimeout(config);
+      if (timeout !== void 0) {
+        item.timer = setTimeout(() => onTimeout(item), timeout);
+      }
+      item.detachAbort = attachAbort(config, () => onAbort(item));
+      queue.push(item);
+      notifyPending();
+    });
   };
   axiosInstance.interceptors.request.use((config) => {
     const originalAdapter = config.adapter;
@@ -181,56 +189,59 @@ function axiosParallelLimit(axiosInstance, options) {
       return config;
     }
     config.adapter = async (adapterConfig) => {
-      notify();
-      return limit(async () => {
-        notify();
-        try {
-          if (typeof originalAdapter === "function") {
-            return await originalAdapter(adapterConfig);
-          } else if (Array.isArray(originalAdapter)) {
-            for (const adapterNameOrFunc of originalAdapter) {
-              let adapter;
-              if (typeof adapterNameOrFunc === "function") {
-                adapter = adapterNameOrFunc;
-              } else if (typeof adapterNameOrFunc === "string") {
-                try {
-                  adapter = axios.getAdapter(adapterNameOrFunc);
-                } catch (err) {
-                  continue;
-                }
-              }
-              if (adapter) {
-                try {
-                  return await adapter(adapterConfig);
-                } catch (err) {
-                  if (err && (err.code === "ERR_ADAPTER_NOT_SUPPORTED" || err.code === "ERR_NOT_SUPPORT")) {
-                    continue;
-                  }
-                  throw err;
-                }
-              }
-            }
-            throw new Error("No adapter in the array handled the request");
-          } else if (typeof originalAdapter === "string") {
-            try {
-              const adapter = axios.getAdapter(originalAdapter);
-              return await adapter(adapterConfig);
-            } catch (err) {
-              throw new Error(`String adapter '${originalAdapter}' failed: ${err}`);
-            }
-          } else {
-            throw new Error(`Adapter is not a function or array, it is: ${typeof originalAdapter}`);
-          }
-        } finally {
-        }
-      }).finally(() => {
-        notify();
-      });
+      const release = await acquire(adapterConfig);
+      try {
+        return await runOriginalAdapter(originalAdapter, adapterConfig);
+      } finally {
+        release();
+      }
     };
     return config;
   });
 }
+async function runOriginalAdapter(originalAdapter, adapterConfig) {
+  if (typeof originalAdapter === "function") {
+    return await originalAdapter(adapterConfig);
+  } else if (Array.isArray(originalAdapter)) {
+    for (const adapterNameOrFunc of originalAdapter) {
+      let adapter;
+      if (typeof adapterNameOrFunc === "function") {
+        adapter = adapterNameOrFunc;
+      } else if (typeof adapterNameOrFunc === "string") {
+        try {
+          adapter = axios.getAdapter(adapterNameOrFunc);
+        } catch (err) {
+          continue;
+        }
+      }
+      if (adapter) {
+        try {
+          return await adapter(adapterConfig);
+        } catch (err) {
+          if (err && (err.code === "ERR_ADAPTER_NOT_SUPPORTED" || err.code === "ERR_NOT_SUPPORT")) {
+            continue;
+          }
+          throw err;
+        }
+      }
+    }
+    throw new Error("No adapter in the array handled the request");
+  } else if (typeof originalAdapter === "string") {
+    try {
+      const adapter = axios.getAdapter(originalAdapter);
+      return await adapter(adapterConfig);
+    } catch (err) {
+      throw new Error(`String adapter '${originalAdapter}' failed: ${err}`);
+    }
+  } else {
+    throw new Error(`Adapter is not a function or array, it is: ${typeof originalAdapter}`);
+  }
+}
 export {
-  axiosParallelLimit
+  QueueFullError,
+  QueueTimeoutError,
+  axiosParallelLimit,
+  isQueueFullError,
+  isQueueTimeoutError
 };
 //# sourceMappingURL=index.js.map
