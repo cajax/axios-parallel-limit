@@ -5,6 +5,7 @@ import axios, {
     AxiosAdapter,
     CanceledError,
 } from 'axios';
+import { BoundedLimiter, BoundedLimiterEventInfo, Cancellation } from './bounded-limiter.js';
 
 const QUEUE_TIMEOUT_CODE = 'ERR_QUEUE_TIMEOUT';
 const QUEUE_FULL_CODE = 'ERR_QUEUE_FULL';
@@ -157,27 +158,78 @@ export interface AxiosParallelLimitOptions {
     onQueueOverflow?: (info: QueueEventInfo) => void;
 }
 
-/** A request parked in the queue, waiting for a slot. */
-interface QueueItem {
-    config: InternalAxiosRequestConfig;
-    enqueuedAt: number;
-    /** Queue-timeout timer handle (if `queueTimeout` is in effect). */
-    timer?: ReturnType<typeof setTimeout>;
-    /** Removes any abort/cancel-token listeners attached for this item. */
-    detachAbort?: () => void;
-    /**
-     * `true` once this item has left the queue via ANY exit path (dispatch,
-     * timeout, cancel). Guarantees a queued request settles exactly once: the
-     * winner of a race flips this and the loser becomes a no-op.
-     */
-    settled: boolean;
-    /** Resolve the acquire() promise, handing back the slot-release function. */
-    resolve: (release: () => void) => void;
-    /** Reject the acquire() promise (timeout / cancel). */
-    reject: (err: unknown) => void;
+/** The standard Axios cancellation error (so `axios.isCancel` recognizes it). */
+function cancelError(config: InternalAxiosRequestConfig): CanceledError<unknown> {
+    // Axios's runtime CanceledError ctor is (message, config, request); its
+    // published type inherits AxiosError's (message, code, config, ...), so we
+    // cast the positional `config` to satisfy the type while staying correct at
+    // runtime (sets code ERR_CANCELED, the __CANCEL__ marker, and attaches config).
+    return new CanceledError(undefined, config as unknown as string);
 }
 
-const now = (): number => Date.now();
+/**
+ * Adapt an Axios request's cancellation sources (`config.signal` and/or the
+ * legacy `config.cancelToken`) into the generic {@link Cancellation} the limiter
+ * understands. Returns `undefined` when the request is not cancellable.
+ */
+function cancellationFor(config: InternalAxiosRequestConfig): Cancellation | undefined {
+    const signal = config.signal;
+    const token = config.cancelToken as
+        | {
+              reason?: unknown;
+              subscribe?: (l: () => void) => void;
+              unsubscribe?: (l: () => void) => void;
+              promise?: Promise<unknown>;
+          }
+        | undefined;
+
+    if (!signal && !token) {
+        return undefined;
+    }
+
+    return {
+        get aborted(): boolean {
+            return Boolean((signal && signal.aborted) || (token && token.reason));
+        },
+        subscribe(onAbort: () => void): () => void {
+            const detachers: Array<() => void> = [];
+
+            if (signal && typeof signal.addEventListener === 'function') {
+                const handler = (): void => onAbort();
+                signal.addEventListener('abort', handler);
+                detachers.push(() => {
+                    if (typeof signal.removeEventListener === 'function') {
+                        signal.removeEventListener('abort', handler);
+                    }
+                });
+            }
+
+            if (token && typeof token.subscribe === 'function') {
+                const handler = (): void => onAbort();
+                token.subscribe(handler);
+                detachers.push(() => token.unsubscribe?.(handler));
+            } else if (token && token.promise && typeof token.promise.then === 'function') {
+                // Fallback for cancel tokens lacking subscribe/unsubscribe.
+                let live = true;
+                token.promise.then(
+                    () => {
+                        if (live) onAbort();
+                    },
+                    () => {
+                        /* never let a token promise rejection surface as unhandled */
+                    },
+                );
+                detachers.push(() => {
+                    live = false;
+                });
+            }
+
+            return () => {
+                for (const detach of detachers) detach();
+            };
+        },
+    };
+}
 
 /**
  * Limits the number of parallel requests for an Axios instance, with an
@@ -193,222 +245,33 @@ export function axiosParallelLimit(
     axiosInstance: AxiosInstance,
     options: AxiosParallelLimitOptions,
 ): void {
-    const { maxRequests, maxQueueSize } = options;
-    const queue: QueueItem[] = [];
-    let active = 0;
+    // Unique per invocation (never `Symbol.for` — must NOT be shared across calls,
+    // so two limiters on one instance each recognise only their own wrapper). Tags
+    // the adapter wrapper this call installs so the interceptor can detect it.
+    const WRAPPED: unique symbol = Symbol('axiosParallelLimitWrapped');
+    type TaggedAdapter = AxiosAdapter & { [WRAPPED]?: true };
 
-    const notifyActive = (): void => options.onActiveCountChange?.(active);
-    const notifyPending = (): void => options.onPendingCountChange?.(queue.length);
-
-    const emit = (
+    // Adapt the host's `QueueEventInfo` callbacks to the limiter's generic event shape.
+    const toQueueInfo = (
         cb: ((info: QueueEventInfo) => void) | undefined,
-        config: InternalAxiosRequestConfig,
-        waitMs: number,
-        queueSize: number,
-    ): void => {
-        cb?.({ config, waitMs, queueSize });
-    };
+    ): ((info: BoundedLimiterEventInfo<InternalAxiosRequestConfig>) => void) | undefined =>
+        cb
+            ? (info) => cb({ config: info.context, waitMs: info.waitMs, queueSize: info.queueSize })
+            : undefined;
 
-    /** The per-request queue-wait budget, honoring a per-call override. */
-    const effectiveTimeout = (config: InternalAxiosRequestConfig): number | undefined => {
-        const perRequest = config.queueTimeout;
-        return typeof perRequest === 'number' ? perRequest : options.queueTimeout;
-    };
-
-    /** The standard Axios cancellation error (so `axios.isCancel` recognizes it). */
-    const cancelError = (config: InternalAxiosRequestConfig): CanceledError<unknown> =>
-        // Axios's runtime CanceledError ctor is (message, config, request); its
-        // published type inherits AxiosError's (message, code, config, ...), so we
-        // cast the positional `config` to satisfy the type while staying correct at
-        // runtime (sets code ERR_CANCELED, the __CANCEL__ marker, and attaches config).
-        new CanceledError(undefined, config as unknown as string);
-
-    /** If the request is already aborted/cancelled, the error to reject it with. */
-    const alreadyAbortedError = (
-        config: InternalAxiosRequestConfig,
-    ): unknown | undefined => {
-        const signal = config.signal;
-        if (signal && signal.aborted) {
-            return cancelError(config);
-        }
-        const token = config.cancelToken as { reason?: unknown } | undefined;
-        if (token && token.reason) {
-            // Axios sets `reason` (a CanceledError) once the token is cancelled.
-            return token.reason;
-        }
-        return undefined;
-    };
-
-    /**
-     * Subscribe to abort/cancel signals for a queued item. Returns a detach
-     * function that removes every listener (called the moment the item leaves
-     * the queue, so nothing fires for an already-settled request).
-     */
-    const attachAbort = (
-        config: InternalAxiosRequestConfig,
-        onAbort: () => void,
-    ): (() => void) => {
-        const detachers: Array<() => void> = [];
-
-        const signal = config.signal;
-        if (signal && typeof signal.addEventListener === 'function') {
-            const handler = (): void => onAbort();
-            signal.addEventListener('abort', handler);
-            detachers.push(() => {
-                if (typeof signal.removeEventListener === 'function') {
-                    signal.removeEventListener('abort', handler);
-                }
-            });
-        }
-
-        const token = config.cancelToken as
-            | {
-                  subscribe?: (l: () => void) => void;
-                  unsubscribe?: (l: () => void) => void;
-                  promise?: Promise<unknown>;
-              }
-            | undefined;
-        if (token && typeof token.subscribe === 'function') {
-            const handler = (): void => onAbort();
-            token.subscribe(handler);
-            detachers.push(() => token.unsubscribe?.(handler));
-        } else if (token && token.promise && typeof token.promise.then === 'function') {
-            // Fallback for cancel tokens lacking subscribe/unsubscribe.
-            let live = true;
-            token.promise.then(
-                () => {
-                    if (live) onAbort();
-                },
-                () => {
-                    /* never let a token promise rejection surface as unhandled */
-                },
-            );
-            detachers.push(() => {
-                live = false;
-            });
-        }
-
-        return () => {
-            for (const detach of detachers) detach();
-        };
-    };
-
-    /** Tear down an item's timer and listeners. Idempotent. */
-    const clearItem = (item: QueueItem): void => {
-        if (item.timer !== undefined) {
-            clearTimeout(item.timer);
-            item.timer = undefined;
-        }
-        if (item.detachAbort) {
-            item.detachAbort();
-            item.detachAbort = undefined;
-        }
-    };
-
-    const removeFromQueue = (item: QueueItem): boolean => {
-        const index = queue.indexOf(item);
-        if (index === -1) return false;
-        queue.splice(index, 1);
-        return true;
-    };
-
-    /** Build the release callback handed to an admitted request. */
-    const makeRelease = (): (() => void) => {
-        let released = false;
-        return () => {
-            if (released) return; // never decrement twice for one slot
-            released = true;
-            active--;
-            notifyActive(); // active--
-            pullNext();
-        };
-    };
-
-    /** Promote the next queued request into a freed slot, if any. */
-    const pullNext = (): void => {
-        if (active >= maxRequests) return;
-        const item = queue.shift();
-        if (!item) return;
-
-        // Won the slot: disable its timeout/abort so neither can act later.
-        item.settled = true;
-        clearItem(item);
-
-        notifyPending(); // pending--
-        active++;
-        notifyActive(); // active++
-        emit(options.onDispatch, item.config, now() - item.enqueuedAt, queue.length);
-
-        item.resolve(makeRelease());
-    };
-
-    const onTimeout = (item: QueueItem): void => {
-        if (item.settled) return; // dispatch already won the race
-        item.settled = true;
-        clearItem(item);
-        if (!removeFromQueue(item)) return;
-
-        notifyPending(); // pending-- (active is untouched — it never became in-flight)
-        emit(options.onQueueTimeout, item.config, now() - item.enqueuedAt, queue.length);
-        item.reject(new QueueTimeoutError(item.config));
-    };
-
-    const onAbort = (item: QueueItem): void => {
-        if (item.settled) return;
-        item.settled = true;
-        clearItem(item);
-        if (!removeFromQueue(item)) return;
-
-        notifyPending(); // pending-- (active untouched)
-        item.reject(cancelError(item.config));
-    };
-
-    /**
-     * Acquire a concurrency slot. Resolves with a release() callback once a slot
-     * is held; rejects (without ever consuming a slot) on overflow, queue-wait
-     * timeout, or cancellation while queued.
-     */
-    const acquire = (config: InternalAxiosRequestConfig): Promise<() => void> => {
-        // 1) Slot free → admit immediately (never subject to queueTimeout).
-        if (active < maxRequests) {
-            active++;
-            notifyActive(); // active++
-            emit(options.onDispatch, config, 0, queue.length);
-            return Promise.resolve(makeRelease());
-        }
-
-        // 2) Already aborted before we could queue it → don't enqueue.
-        const aborted = alreadyAbortedError(config);
-        if (aborted !== undefined) {
-            return Promise.reject(aborted);
-        }
-
-        // 3) Queue full → reject BEFORE enqueuing (pending unchanged, no count callback).
-        if (maxQueueSize !== undefined && queue.length >= maxQueueSize) {
-            emit(options.onQueueOverflow, config, 0, queue.length);
-            return Promise.reject(new QueueFullError(config));
-        }
-
-        // 4) Defer: park in the queue until a slot frees (or it times out / is cancelled).
-        return new Promise<() => void>((resolve, reject) => {
-            const item: QueueItem = {
-                config,
-                enqueuedAt: now(),
-                settled: false,
-                resolve,
-                reject,
-            };
-
-            const timeout = effectiveTimeout(config);
-            if (timeout !== undefined) {
-                item.timer = setTimeout(() => onTimeout(item), timeout);
-            }
-            item.detachAbort = attachAbort(config, () => onAbort(item));
-
-            queue.push(item);
-            notifyPending(); // pending++
-        });
-    };
+    const limiter = new BoundedLimiter<InternalAxiosRequestConfig>({
+        maxConcurrency: options.maxRequests,
+        maxQueueSize: options.maxQueueSize,
+        queueTimeout: options.queueTimeout,
+        onActiveCountChange: options.onActiveCountChange,
+        onPendingCountChange: options.onPendingCountChange,
+        onDispatch: toQueueInfo(options.onDispatch),
+        onQueueTimeout: toQueueInfo(options.onQueueTimeout),
+        onQueueOverflow: toQueueInfo(options.onQueueOverflow),
+        createTimeoutError: (config) => new QueueTimeoutError(config),
+        createOverflowError: (config) => new QueueFullError(config),
+        createAbortError: (config) => cancelError(config),
+    });
 
     axiosInstance.interceptors.request.use((config: InternalAxiosRequestConfig) => {
         const originalAdapter = config.adapter;
@@ -417,16 +280,31 @@ export function axiosParallelLimit(
             return config;
         }
 
-        config.adapter = async (adapterConfig) => {
+        // Idempotency guard: a request re-issued by an auth/retry interceptor (e.g.
+        // `instance(error.config)`) re-runs the request interceptors on a config whose
+        // `.adapter` is ALREADY our wrapper (mergeConfig copies `adapter` by reference,
+        // preserving this Symbol). Re-wrapping it would nest acquire() inside acquire()
+        // — an outer slot held while awaiting an inner one — which deadlocks the pool
+        // once ~maxRequests re-issues pile up. Reuse the existing wrapper instead.
+        if (typeof originalAdapter === 'function' && (originalAdapter as TaggedAdapter)[WRAPPED] === true) {
+            return config;
+        }
+
+        const wrapped: TaggedAdapter = async (adapterConfig) => {
             // Block here until a slot is granted. If acquire() rejects (overflow,
             // queue timeout, cancel) the original adapter is never invoked.
-            const release = await acquire(adapterConfig);
+            const release = await limiter.acquire(adapterConfig, {
+                queueTimeout: adapterConfig.queueTimeout,
+                cancellation: cancellationFor(adapterConfig),
+            });
             try {
                 return await runOriginalAdapter(originalAdapter, adapterConfig);
             } finally {
                 release();
             }
         };
+        wrapped[WRAPPED] = true;
+        config.adapter = wrapped;
 
         return config;
     });

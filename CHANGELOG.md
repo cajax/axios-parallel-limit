@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-06-02
+
+### Fixed
+
+- **Re-entrancy deadlock from double-wrapping the adapter.** A request re-issued by
+  an auth or retry interceptor that reuses the same config object (e.g. refreshing a
+  token on `401` and retrying with `instance(error.config)`, or an `axios-retry`-style
+  flow) re-runs the request interceptors on a config whose `.adapter` was already this
+  library's wrapper (`mergeConfig` copies `adapter` by reference). The interceptor then
+  wrapped the wrapper a second time, nesting slot acquisitions — each retry held an
+  outer slot while awaiting an inner one. Once ~`maxRequests` re-issued requests piled
+  up, every slot was held by an outer acquisition waiting on an inner one that could
+  never be granted, permanently deadlocking the pool. Wrapping is now **idempotent**:
+  the wrapper is tagged with a per-instance `Symbol` and the interceptor reuses the
+  existing wrapper instead of nesting, so a re-issued request performs exactly one
+  acquisition and remains fully concurrency-limited. No public API change.
+
+[1.1.1]: https://github.com/cajax/axios-parallel-limit/releases/tag/v1.1.1
+
 ## [1.1.0] - 2026-06-01
 
 Bounded queue + offer/wait-deadline support. Everything in this release is

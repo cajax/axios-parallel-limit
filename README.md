@@ -183,6 +183,12 @@ Key invariants: `active` never exceeds `maxRequests` on any path; `pending` alwa
 
 The library wraps the Axios adapter to intercept the actual request execution. Each request must acquire one of `maxRequests` concurrency slots before its underlying adapter runs. If a slot is free the request runs immediately; otherwise it waits in an in-memory FIFO queue (subject to `maxQueueSize` and `queueTimeout` when configured) and is dispatched, in order, as slots free up. Timed-out, overflowed, and cancelled requests are removed from the queue and never reach the transport; their queue-timeout timers are always cleared, so nothing leaks after the queue drains.
 
+### Idempotent wrapping (auth / retry interceptors)
+
+Wrapping is **idempotent** — a request re-issued by an auth or retry interceptor that reuses the same config object (e.g. an interceptor that refreshes a token on `401` and retries with `instance(error.config)`, or an `axios-retry`-style flow) is **not** double-wrapped. Previously this caused nested slot acquisitions — each retry held an outer slot while waiting for an inner one — that could deadlock the pool once enough retries were in flight. A re-issued request now reuses the single existing adapter wrapper, so it performs exactly one acquisition and stays fully concurrency-limited.
+
+> Apply `axiosParallelLimit` **at most once per axios instance**. Stacking it more than once on the same instance creates independent pools whose wrappers nest by design, which is unsupported and inherently deadlock-prone.
+
 ## Migration
 
 `axios-parallel-limit@1.1.0` is a backward-compatible minor release. All new options (`queueTimeout`, `maxQueueSize`, `onDispatch`, `onQueueTimeout`, `onQueueOverflow`) and the per-request `queueTimeout` override are **opt-in**: leave them unset and behavior is identical to before.
