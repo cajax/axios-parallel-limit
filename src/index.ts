@@ -93,7 +93,7 @@ declare module 'axios' {
 }
 
 /**
- * Payload passed to the new observability callbacks ({@link AxiosParallelLimitOptions.onDispatch},
+ * Payload passed to the observability callbacks ({@link AxiosParallelLimitOptions.onDispatch},
  * {@link AxiosParallelLimitOptions.onQueueTimeout}, {@link AxiosParallelLimitOptions.onQueueOverflow}).
  */
 export interface QueueEventInfo {
@@ -129,7 +129,7 @@ export interface AxiosParallelLimitOptions {
      * HTTP/execution time — and a request that gets a slot immediately is never
      * subject to it. Can be overridden per-request via `config.queueTimeout`.
      *
-     * Default: disabled (unbounded wait — preserves the original behavior).
+     * Default: disabled — a queued request waits indefinitely for a slot.
      */
     queueTimeout?: number;
     /**
@@ -138,7 +138,7 @@ export interface AxiosParallelLimitOptions {
      * {@link QueueFullError} (load shedding / fail-fast back-pressure) instead of
      * being enqueued.
      *
-     * Default: unbounded (preserves the original behavior).
+     * Default: unbounded — no limit on queue depth.
      */
     maxQueueSize?: number;
     /**
@@ -235,8 +235,8 @@ function cancellationFor(config: InternalAxiosRequestConfig): Cancellation | und
  * Limits the number of parallel requests for an Axios instance, with an
  * optional bounded queue (`maxQueueSize`) and queue-wait deadline (`queueTimeout`).
  *
- * All options beyond `maxRequests` are opt-in and backward compatible: with only
- * `maxRequests` set, behavior is an unbounded FIFO queue exactly as before.
+ * All options beyond `maxRequests` are optional: with only `maxRequests` set, the
+ * limiter caps concurrency and queues the rest in an unbounded FIFO queue.
  *
  * @param axiosInstance The Axios instance to apply the limit to.
  * @param options Configuration options.

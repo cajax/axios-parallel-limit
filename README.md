@@ -4,7 +4,7 @@ A lightweight Axios wrapper that caps the number of in-flight requests and queue
 
 On top of the concurrency cap it adds an **optional bounded queue** (`maxQueueSize`) and an **optional queue-wait deadline** (`queueTimeout`) so that, under overload, requests **fail fast** with a typed error instead of piling up behind an unbounded queue and hanging until some far-away timeout kills them. This is the classic bounded-work-queue / bulkhead pattern used by thread-pool executors and resilience libraries.
 
-All of the new behavior is **opt-in** — with only `maxRequests` set, the wrapper behaves exactly as before.
+Everything beyond `maxRequests` is **optional** — the bounded queue (`maxQueueSize`), the queue-wait deadline (`queueTimeout`), and the observability callbacks. With only `maxRequests` set, the wrapper caps concurrency and queues the rest in an unbounded FIFO queue.
 
 ## Installation
 
@@ -14,44 +14,41 @@ npm install @cajax/axios-parallel-limit
 
 ## Usage
 
+Cap concurrency with a single option — everything else is optional:
+
 ```typescript
 import axios from 'axios';
-import { axiosParallelLimit } from 'axios-parallel-limit';
+import { axiosParallelLimit } from '@cajax/axios-parallel-limit';
 
-// Create an Axios instance
-const http = axios.create({
-  baseURL: 'https://api.example.com'
-});
+const http = axios.create({ baseURL: 'https://api.example.com' });
 
-// Apply the parallel limit
+axiosParallelLimit(http, { maxRequests: 5 }); // at most 5 requests in flight; the rest queue
+
+// Use the instance exactly as you normally would.
+// Only 5 requests run at a time; the other 15 wait their turn in a FIFO queue.
+for (let i = 0; i < 20; i++) {
+  http.get(`/items/${i}`).then((response) => {
+    console.log(`Item ${i} loaded`);
+  });
+}
+```
+
+Add a bounded queue, a queue-wait deadline, and observability callbacks as you need them:
+
+```typescript
 axiosParallelLimit(http, {
   maxRequests: 5,     // run at most 5 requests concurrently
   maxQueueSize: 50,   // queue up to 50 more, then reject (load shedding)
   queueTimeout: 5000, // a queued request waits at most 5s for a free slot
-  onActiveCountChange: (active) => {
-    console.log(`Active requests: ${active}`);
-  },
-  onPendingCountChange: (pending) => {
-    console.log(`Pending requests: ${pending}`);
-  },
-  onDispatch: ({ config, waitMs }) => {
-    console.log(`Dispatched ${config.url} after ${waitMs}ms in the queue`);
-  },
-  onQueueTimeout: ({ config, waitMs }) => {
-    console.warn(`Timed out ${config.url} after waiting ${waitMs}ms for a slot`);
-  },
-  onQueueOverflow: ({ config }) => {
-    console.warn(`Rejected ${config.url}: the queue is full`);
-  }
+  onActiveCountChange: (active) => console.log(`Active requests: ${active}`),
+  onPendingCountChange: (pending) => console.log(`Pending requests: ${pending}`),
+  onDispatch: ({ config, waitMs }) =>
+    console.log(`Dispatched ${config.url} after ${waitMs}ms in the queue`),
+  onQueueTimeout: ({ config, waitMs }) =>
+    console.warn(`Timed out ${config.url} after waiting ${waitMs}ms for a slot`),
+  onQueueOverflow: ({ config }) =>
+    console.warn(`Rejected ${config.url}: the queue is full`),
 });
-
-// Now use the axios instance as usual
-// Only 5 requests will run in parallel, others will be queued
-for (let i = 0; i < 20; i++) {
-  http.get(`/items/${i}`).then(response => {
-    console.log(`Item ${i} loaded`);
-  });
-}
 ```
 
 ## Configuration
@@ -65,7 +62,7 @@ The `axiosParallelLimit` function takes two arguments:
 | `maxRequests` | `number` | Yes | — | Maximum number of requests that can run simultaneously. |
 | `onActiveCountChange` | `(count: number) => void` | No | — | Called when the number of **active** (in-flight) requests changes. |
 | `onPendingCountChange` | `(count: number) => void` | No | — | Called when the number of **pending** (queued) requests changes. |
-| `queueTimeout` | `number` (ms) | No | disabled | Max time a request may spend **waiting in the queue** for a free slot. See [Bounded queue](#bounded-queue--back-pressure). |
+| `queueTimeout` | `number` (ms) | No | disabled | Max time a request may spend **waiting in the queue** for a free slot. Overridable per request via `config.queueTimeout` (see [Per-request override](#per-request-queuetimeout-override)). See [Bounded queue](#bounded-queue--back-pressure). |
 | `maxQueueSize` | `number` | No | unbounded | Hard upper bound on queue depth. Requests beyond it are rejected immediately (load shedding). |
 | `onDispatch` | `(info: QueueEventInfo) => void` | No | — | Called when a request starts executing, reporting its **queue-wait latency** (`waitMs`). |
 | `onQueueTimeout` | `(info: QueueEventInfo) => void` | No | — | Called when a request is rejected due to `queueTimeout`. |
@@ -126,7 +123,7 @@ controller.abort(); // if still queued, it leaves the queue and never executes
 
 ```typescript
 import axios from 'axios';
-import { axiosParallelLimit, isQueueTimeoutError, isQueueFullError } from 'axios-parallel-limit';
+import { axiosParallelLimit, isQueueTimeoutError, isQueueFullError } from '@cajax/axios-parallel-limit';
 
 const downstream = axios.create({
   baseURL: 'https://downstream.internal',
@@ -172,7 +169,7 @@ Each carries a stable, machine-checkable `code`, a descriptive `name`/`message`,
 
 **Design choice (and trade-off):** callers commonly branch on `axios.isAxiosError(err)`. A queue rejection is **not** an Axios error, and these classes are intentionally kept distinct — `axios.isAxiosError(err)` returns `false` for both. Branch on the exported type guards (or the stable `code`) instead. This is the correct, unambiguous choice, but note the trade-off: existing code that only inspects `axios.isAxiosError` / Axios timeout codes (`ECONNABORTED`) will **not** treat a queue rejection as a timeout. (We deliberately do *not* masquerade these as Axios `ECONNABORTED` errors; if you need that, map them yourself in a response interceptor.) A cancellation while queued *does* reject with the standard Axios cancellation error, so `axios.isCancel(err)` works as usual.
 
-## Counts and observability on the new paths
+## Counts and observability
 
 The two count signals — **active** (in-flight) and **pending** (queued) — stay correct across every exit path. Each transition fires the matching callback exactly once:
 
@@ -188,7 +185,7 @@ The two count signals — **active** (in-flight) and **pending** (queued) — st
 
 Key invariants: `active` never exceeds `maxRequests` on any path; `pending` always equals the number of requests physically in the queue and returns to `0` once it drains, however items left it; and an overflow-rejected request fires **no** count callback (it is rejected before being enqueued).
 
-> Note: callbacks fire on the specific count that changed (e.g. a queue-timeout fires `onPendingCountChange` only — `active` is untouched). This is a small precision improvement over the original, which fired both count callbacks together on every change; the active/pending **values** you observe are unchanged.
+> Note: each callback fires on the specific count that changed — e.g. a queue-timeout fires `onPendingCountChange` only, leaving `active` untouched.
 
 ## How it works
 
@@ -199,10 +196,6 @@ The library wraps the Axios adapter to intercept the actual request execution. E
 Wrapping is **idempotent**. A request re-issued by an auth or retry interceptor that reuses the same config object — e.g. refreshing a token on `401` and retrying with `instance(error.config)`, or an `axios-retry`-style flow — reuses the single existing adapter wrapper instead of being wrapped again. It therefore acquires exactly one slot per attempt and stays fully concurrency-limited, no matter how many times it is retried.
 
 > Apply `axiosParallelLimit` **at most once per axios instance**. Stacking it on the same instance creates independent, nested pools that can deadlock, so it is unsupported.
-
-## Migration
-
-`axios-parallel-limit@1.1.0` is a backward-compatible minor release. All new options (`queueTimeout`, `maxQueueSize`, `onDispatch`, `onQueueTimeout`, `onQueueOverflow`) and the per-request `queueTimeout` override are **opt-in**: leave them unset and behavior is identical to before.
 
 ## License
 
