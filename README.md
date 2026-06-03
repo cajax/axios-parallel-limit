@@ -25,12 +25,23 @@ const http = axios.create({
 
 // Apply the parallel limit
 axiosParallelLimit(http, {
-  maxRequests: 5, // Limit to 5 concurrent requests
+  maxRequests: 5,     // run at most 5 requests concurrently
+  maxQueueSize: 50,   // queue up to 50 more, then reject (load shedding)
+  queueTimeout: 5000, // a queued request waits at most 5s for a free slot
   onActiveCountChange: (active) => {
     console.log(`Active requests: ${active}`);
   },
   onPendingCountChange: (pending) => {
     console.log(`Pending requests: ${pending}`);
+  },
+  onDispatch: ({ config, waitMs }) => {
+    console.log(`Dispatched ${config.url} after ${waitMs}ms in the queue`);
+  },
+  onQueueTimeout: ({ config, waitMs }) => {
+    console.warn(`Timed out ${config.url} after waiting ${waitMs}ms for a slot`);
+  },
+  onQueueOverflow: ({ config }) => {
+    console.warn(`Rejected ${config.url}: the queue is full`);
   }
 });
 
@@ -185,9 +196,9 @@ The library wraps the Axios adapter to intercept the actual request execution. E
 
 ### Idempotent wrapping (auth / retry interceptors)
 
-Wrapping is **idempotent** — a request re-issued by an auth or retry interceptor that reuses the same config object (e.g. an interceptor that refreshes a token on `401` and retries with `instance(error.config)`, or an `axios-retry`-style flow) is **not** double-wrapped. Previously this caused nested slot acquisitions — each retry held an outer slot while waiting for an inner one — that could deadlock the pool once enough retries were in flight. A re-issued request now reuses the single existing adapter wrapper, so it performs exactly one acquisition and stays fully concurrency-limited.
+Wrapping is **idempotent**. A request re-issued by an auth or retry interceptor that reuses the same config object — e.g. refreshing a token on `401` and retrying with `instance(error.config)`, or an `axios-retry`-style flow — reuses the single existing adapter wrapper instead of being wrapped again. It therefore acquires exactly one slot per attempt and stays fully concurrency-limited, no matter how many times it is retried.
 
-> Apply `axiosParallelLimit` **at most once per axios instance**. Stacking it more than once on the same instance creates independent pools whose wrappers nest by design, which is unsupported and inherently deadlock-prone.
+> Apply `axiosParallelLimit` **at most once per axios instance**. Stacking it on the same instance creates independent, nested pools that can deadlock, so it is unsupported.
 
 ## Migration
 
