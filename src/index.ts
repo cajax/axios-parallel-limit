@@ -249,10 +249,35 @@ function cancellationFor(config: InternalAxiosRequestConfig): Cancellation | und
  * @param axiosInstance The Axios instance to apply the limit to.
  * @param options Configuration options.
  */
+/**
+ * Controller handle returned by {@link axiosParallelLimit} to inspect and control
+ * the concurrency limiter at runtime.
+ */
+export interface AxiosParallelLimitController {
+    /** Number of requests currently executing in-flight. */
+    readonly activeCount: number;
+    /** Number of requests currently waiting in the queue. */
+    readonly pendingCount: number;
+    /** Current maximum concurrency limit. */
+    readonly maxRequests: number;
+    /**
+     * Dynamically update the concurrency limit at runtime.
+     * If increased, waiting requests are immediately dispatched into the newly available slots.
+     */
+    setMaxConcurrency(limit: number): void;
+    /**
+     * Clear all requests currently waiting in the queue, rejecting them with
+     * `reason` (or a standard cancellation error if omitted).
+     * Requests already executing in-flight are not affected.
+     * Returns the number of requests that were cleared.
+     */
+    clearQueue(reason?: unknown): number;
+}
+
 export function axiosParallelLimit(
     axiosInstance: AxiosInstance,
     options: AxiosParallelLimitOptions,
-): void {
+): AxiosParallelLimitController {
     if (!Number.isFinite(options.maxRequests) || options.maxRequests < 1) {
         throw new RangeError(
             `maxRequests must be a positive number >= 1, received: ${options.maxRequests}`,
@@ -322,6 +347,24 @@ export function axiosParallelLimit(
 
         return config;
     });
+
+    return {
+        get activeCount() {
+            return limiter.activeCount;
+        },
+        get pendingCount() {
+            return limiter.pendingCount;
+        },
+        get maxRequests() {
+            return limiter.maxConcurrency;
+        },
+        setMaxConcurrency(limit: number) {
+            limiter.setMaxConcurrency(limit);
+        },
+        clearQueue(reason?: unknown) {
+            return limiter.clearQueue(reason);
+        },
+    };
 }
 
 /**

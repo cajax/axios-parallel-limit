@@ -48,7 +48,7 @@ var BoundedLimiter = class {
     };
     /** Promote the next queued task into a freed slot, if any. */
     this.pullNext = () => {
-      if (this.active >= this.options.maxConcurrency) return;
+      if (this.active >= this._maxConcurrency) return;
       const item = this.queue.shift();
       if (!item) return;
       item.settled = true;
@@ -91,6 +91,7 @@ var BoundedLimiter = class {
         `queueTimeout must be a non-negative number >= 0, received: ${options.queueTimeout}`
       );
     }
+    this._maxConcurrency = options.maxConcurrency;
   }
   /** Tasks currently holding a slot. */
   get activeCount() {
@@ -100,13 +101,50 @@ var BoundedLimiter = class {
   get pendingCount() {
     return this.queue.length;
   }
+  /** Current maximum concurrency limit. */
+  get maxConcurrency() {
+    return this._maxConcurrency;
+  }
+  /**
+   * Dynamically update the concurrency limit at runtime.
+   * If increased, queued tasks are immediately dispatched into available slots.
+   */
+  setMaxConcurrency(limit) {
+    if (!Number.isFinite(limit) || limit < 1) {
+      throw new RangeError(
+        `maxConcurrency must be a positive number >= 1, received: ${limit}`
+      );
+    }
+    this._maxConcurrency = limit;
+    while (this.active < this._maxConcurrency && this.queue.length > 0) {
+      this.pullNext();
+    }
+  }
+  /**
+   * Clear all tasks currently waiting in the queue, rejecting them with
+   * `reason` (or the default cancellation error). Does not affect tasks
+   * already actively in-flight. Returns the count of cancelled tasks.
+   */
+  clearQueue(reason) {
+    const count = this.queue.length;
+    if (count === 0) return 0;
+    const items = this.queue.splice(0, this.queue.length);
+    for (const item of items) {
+      if (item.settled) continue;
+      item.settled = true;
+      this.clearItem(item);
+      item.reject(reason ?? this.options.createAbortError(item.context));
+    }
+    this.notifyPending();
+    return count;
+  }
   /**
    * Acquire a slot. Resolves with a `release()` once a slot is held; rejects
    * (without ever consuming a slot) on overflow, queue-wait timeout, or
    * cancellation while queued.
    */
   acquire(context, opts = {}) {
-    if (this.active < this.options.maxConcurrency) {
+    if (this.active < this._maxConcurrency) {
       this.active++;
       this.notifyActive();
       this.emit(this.options.onDispatch, context, 0);
@@ -261,6 +299,23 @@ function axiosParallelLimit(axiosInstance, options) {
     config.adapter = wrapped;
     return config;
   });
+  return {
+    get activeCount() {
+      return limiter.activeCount;
+    },
+    get pendingCount() {
+      return limiter.pendingCount;
+    },
+    get maxRequests() {
+      return limiter.maxConcurrency;
+    },
+    setMaxConcurrency(limit) {
+      limiter.setMaxConcurrency(limit);
+    },
+    clearQueue(reason) {
+      return limiter.clearQueue(reason);
+    }
+  };
 }
 async function runOriginalAdapter(originalAdapter, adapterConfig) {
   if (typeof originalAdapter === "function") {
