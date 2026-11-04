@@ -170,7 +170,8 @@ function isQueueFullError(err) {
   return err instanceof QueueFullError || typeof err === "object" && err !== null && err.code === QUEUE_FULL_CODE && err.name === "QueueFullError";
 }
 function cancelError(config) {
-  return new CanceledError(void 0, config);
+  const Ctor = CanceledError;
+  return new Ctor(void 0, config);
 }
 function cancellationFor(config) {
   const signal = config.signal;
@@ -222,7 +223,7 @@ function axiosParallelLimit(axiosInstance, options) {
       `maxRequests must be a positive number >= 1, received: ${options.maxRequests}`
     );
   }
-  const WRAPPED = /* @__PURE__ */ Symbol("axiosParallelLimitWrapped");
+  const WRAPPED = Symbol("axiosParallelLimitWrapped");
   const toQueueInfo = (cb) => cb ? (info) => cb({ config: info.context, waitMs: info.waitMs, queueSize: info.queueSize }) : void 0;
   const limiter = new BoundedLimiter({
     maxConcurrency: options.maxRequests,

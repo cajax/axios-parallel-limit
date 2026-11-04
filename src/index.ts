@@ -168,7 +168,11 @@ export interface AxiosParallelLimitOptions {
 
 /** The standard Axios cancellation error (so `axios.isCancel` recognizes it). */
 function cancelError(config: InternalAxiosRequestConfig): CanceledError<unknown> {
-    return new CanceledError(undefined, config);
+    const Ctor = CanceledError as unknown as new (
+        message?: string,
+        config?: InternalAxiosRequestConfig,
+    ) => CanceledError<unknown>;
+    return new Ctor(undefined, config);
 }
 
 /**
