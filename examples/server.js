@@ -1,7 +1,5 @@
 import http from 'http';
 import readline from 'readline';
-import axios from 'axios';
-import { axiosParallelLimit, isQueueTimeoutError, isQueueFullError } from '../dist/index.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = '0.0.0.0';
@@ -61,10 +59,10 @@ function renderHtml() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Axios Parallel Limit — Interactive Demo</title>
+    <title>Axios Parallel Limit — Interactive Traffic & Concurrency Simulator</title>
     <style>
         :root {
-            --bg-color: #0f172a;
+            --bg-color: #0b1120;
             --card-bg: #1e293b;
             --border-color: #334155;
             --text-main: #f8fafc;
@@ -83,11 +81,16 @@ function renderHtml() {
             line-height: 1.5;
             padding: 24px 16px;
         }
-        .container { max-width: 1040px; margin: 0 auto; }
+        .container { max-width: 1140px; margin: 0 auto; }
         header {
-            margin-bottom: 24px;
-            padding-bottom: 20px;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
             border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 12px;
         }
         .badge {
             display: inline-block;
@@ -99,72 +102,84 @@ function renderHtml() {
             background: #0284c7;
             color: white;
             letter-spacing: 0.5px;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
-        h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 6px; }
-        .subtitle { color: var(--text-muted); font-size: 0.95rem; }
+        h1 { font-size: 1.65rem; font-weight: 700; margin-bottom: 4px; }
+        .subtitle { color: var(--text-muted); font-size: 0.9rem; }
         
         .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
-        @media (min-width: 860px) {
-            .grid { grid-template-columns: 360px 1fr; }
+        @media (min-width: 900px) {
+            .grid { grid-template-columns: 380px 1fr; }
         }
         
         .card {
             background-color: var(--card-bg);
             border: 1px solid var(--border-color);
             border-radius: 8px;
-            padding: 20px;
+            padding: 18px;
+            margin-bottom: 18px;
         }
-        .card h2 { font-size: 1.15rem; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; }
+        .card h2 { font-size: 1.1rem; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; }
         
-        .form-group { margin-bottom: 14px; }
-        label { display: block; font-size: 0.825rem; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
-        input, select {
+        .form-group { margin-bottom: 12px; }
+        label { display: block; font-size: 0.825rem; font-weight: 600; color: var(--text-muted); margin-bottom: 5px; }
+        .label-val { float: right; color: var(--accent-blue); font-weight: 700; }
+        input[type="number"], select {
             width: 100%;
-            padding: 8px 12px;
+            padding: 7px 10px;
             border-radius: 6px;
             border: 1px solid var(--border-color);
-            background: #0b1120;
+            background: #080d1a;
             color: white;
-            font-size: 0.9rem;
+            font-size: 0.875rem;
         }
-        input:focus, select:focus { outline: none; border-color: var(--accent-blue); }
-        .help-text { font-size: 0.75rem; color: #64748b; margin-top: 4px; }
-        
-        button.btn-primary {
+        input[type="range"] {
             width: 100%;
-            background: #2563eb;
-            color: white;
+            cursor: pointer;
+            accent-color: #38bdf8;
+        }
+        .help-text { font-size: 0.72rem; color: #64748b; margin-top: 3px; }
+        
+        .btn-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+        button {
             border: none;
-            padding: 10px 16px;
+            padding: 8px 12px;
             border-radius: 6px;
             font-weight: 600;
-            font-size: 0.95rem;
+            font-size: 0.85rem;
             cursor: pointer;
-            transition: background 0.15s ease;
-            margin-top: 8px;
+            transition: all 0.15s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
         }
-        button.btn-primary:hover { background: #1d4ed8; }
-        button.btn-primary:disabled { background: #475569; cursor: not-allowed; }
+        button:hover { opacity: 0.9; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-stream { background: #16a34a; color: white; width: 100%; padding: 10px; font-size: 0.95rem; }
+        .btn-stream.active { background: #dc2626; }
+        .btn-action { background: #2563eb; color: white; flex: 1; }
+        .btn-secondary { background: #334155; color: white; }
+        .btn-danger { background: #b91c1c; color: white; }
         
         .stats-bar {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
-            margin-bottom: 20px;
+            gap: 10px;
+            margin-bottom: 16px;
         }
         @media (min-width: 600px) {
             .stats-bar { grid-template-columns: repeat(4, 1fr); }
         }
         .stat-item {
-            background: #0b1120;
+            background: #080d1a;
             border: 1px solid var(--border-color);
             border-radius: 6px;
-            padding: 12px;
+            padding: 10px 12px;
             text-align: center;
         }
         .stat-val { font-size: 1.5rem; font-weight: 700; line-height: 1.2; }
-        .stat-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; margin-top: 4px; }
+        .stat-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px; }
         .val-active { color: var(--accent-blue); }
         .val-pending { color: var(--accent-amber); }
         .val-done { color: var(--accent-green); }
@@ -173,149 +188,161 @@ function renderHtml() {
         .request-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-            gap: 10px;
-            max-height: 280px;
+            gap: 8px;
+            max-height: 310px;
             overflow-y: auto;
-            padding-right: 4px;
-            margin-bottom: 20px;
+            padding: 4px;
+            background: #080d1a;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 16px;
         }
         .req-chip {
-            background: #0b1120;
+            background: #1e293b;
             border: 1px solid var(--border-color);
             border-radius: 6px;
-            padding: 8px 10px;
+            padding: 6px 8px;
             font-size: 0.75rem;
             transition: all 0.2s ease;
         }
         .req-chip.state-queued { border-left: 4px solid var(--accent-amber); }
-        .req-chip.state-active { border-left: 4px solid var(--accent-blue); background: #0c2135; }
-        .req-chip.state-done { border-left: 4px solid var(--accent-green); }
-        .req-chip.state-timeout { border-left: 4px solid var(--accent-red); opacity: 0.8; }
-        .req-chip.state-overflow { border-left: 4px solid var(--accent-purple); opacity: 0.8; }
-        .chip-id { font-weight: 600; display: flex; justify-content: space-between; }
+        .req-chip.state-active { border-left: 4px solid var(--accent-blue); background: #0c2135; box-shadow: 0 0 8px rgba(56, 189, 248, 0.2); }
+        .req-chip.state-done { border-left: 4px solid var(--accent-green); opacity: 0.75; }
+        .req-chip.state-timeout { border-left: 4px solid var(--accent-red); opacity: 0.65; }
+        .req-chip.state-overflow { border-left: 4px solid var(--accent-purple); opacity: 0.65; }
+        .req-chip.state-flushed { border-left: 4px solid #64748b; opacity: 0.5; }
+        .chip-id { font-weight: 600; display: flex; justify-content: space-between; font-size: 0.78rem; }
         .chip-state { font-size: 0.7rem; color: var(--text-muted); margin-top: 2px; }
-        .chip-wait { font-size: 0.65rem; color: #64748b; }
+        .chip-wait { font-size: 0.65rem; color: #94a3b8; margin-top: 1px; }
         
         .terminal {
-            background: #090d16;
+            background: #050811;
             border: 1px solid var(--border-color);
             border-radius: 6px;
-            padding: 12px;
+            padding: 10px 12px;
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-            font-size: 0.8rem;
+            font-size: 0.78rem;
             height: 180px;
             overflow-y: auto;
             color: #cbd5e1;
         }
         .log-entry { margin-bottom: 3px; }
-        .log-time { color: #64748b; margin-right: 8px; }
+        .log-time { color: #64748b; margin-right: 6px; }
         .log-info { color: var(--accent-blue); }
         .log-warn { color: var(--accent-amber); }
         .log-err { color: var(--accent-red); }
         .log-success { color: var(--accent-green); }
-        
-        .code-box {
-            background: #090d16;
-            padding: 10px;
-            border-radius: 6px;
-            font-family: monospace;
-            font-size: 0.8rem;
-            color: #e2e8f0;
-            overflow-x: auto;
-            margin-top: 10px;
-            border: 1px solid var(--border-color);
-        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <span class="badge">Axios Concurrency Control</span>
-            <h1>axios-parallel-limit</h1>
-            <p class="subtitle">Bounded work queue, concurrency limiter, and fail-fast resilience wrapper for Axios</p>
+            <div>
+                <span class="badge">Live Concurrency & Queue Simulator</span>
+                <h1>axios-parallel-limit</h1>
+                <p class="subtitle">Bounded work queue, concurrency limiter, and fail-fast resilience wrapper for Axios</p>
+            </div>
+            <div style="text-align: right;">
+                <button onclick="resetAll()" class="btn-secondary" style="font-size: 0.78rem; padding: 6px 10px;">Reset Simulator</button>
+            </div>
         </header>
 
         <div class="grid">
-            <!-- Left column: Configuration -->
-            <div class="card">
-                <h2>Simulation Options</h2>
-                
-                <div class="form-group">
-                    <label for="totalRequests">Total Requests to Send</label>
-                    <input type="number" id="totalRequests" value="12" min="1" max="100">
-                    <div class="help-text">Number of parallel requests to fire simultaneously.</div>
+            <!-- Left column: Live Controls -->
+            <div>
+                <!-- Ingestion / Job Generation Card -->
+                <div class="card">
+                    <h2>Traffic Ingestion (Continuous Addition)</h2>
+                    
+                    <div class="form-group">
+                        <label>Continuous Stream Rate: <span id="rateDisplay" class="label-val">4 jobs/sec</span></label>
+                        <input type="range" id="streamRate" min="1" max="20" value="4" oninput="updateStreamRate(this.value)">
+                        <div class="help-text">Controls how fast new jobs are continuously submitted into the pool.</div>
+                    </div>
+
+                    <button id="streamBtn" class="btn-stream" onclick="toggleStream()">Start Continuous Ingestion</button>
+
+                    <div style="margin-top: 14px; border-top: 1px solid var(--border-color); padding-top: 12px;">
+                        <label>Manual Job Ingestion (Click Any Time)</label>
+                        <div class="btn-row">
+                            <button class="btn-action" onclick="addJobs(1)">+ 1 Job</button>
+                            <button class="btn-action" onclick="addJobs(5)">+ 5 Jobs</button>
+                            <button class="btn-action" onclick="addJobs(15)">+ 15 Burst</button>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="form-group">
-                    <label for="maxRequests">Max Concurrency (maxRequests)</label>
-                    <input type="number" id="maxRequests" value="3" min="1" max="20">
-                    <div class="help-text">At most this many run in-flight; others queue.</div>
-                </div>
+                <!-- Pool & Resilience Configuration Card -->
+                <div class="card">
+                    <h2>Pool & Backpressure Settings</h2>
 
-                <div class="form-group">
-                    <label for="queueTimeout">Queue Timeout (ms) [Optional]</label>
-                    <input type="number" id="queueTimeout" value="0" min="0" placeholder="0 = disabled">
-                    <div class="help-text">Max time a request waits in queue before fail-fast timeout.</div>
-                </div>
+                    <div class="form-group">
+                        <label>Live Concurrency Cap (maxRequests): <span id="capDisplay" class="label-val">3</span></label>
+                        <input type="range" id="maxRequests" min="1" max="15" value="3" oninput="updateConcurrencyCap(this.value)">
+                        <div class="help-text">Adjust dynamically mid-flight! Dispatches queued tasks immediately on scale-up.</div>
+                    </div>
 
-                <div class="form-group">
-                    <label for="maxQueueSize">Max Queue Size [Optional]</label>
-                    <input type="number" id="maxQueueSize" value="0" min="0" placeholder="0 = unbounded">
-                    <div class="help-text">Upper limit on queue depth. Overflows reject immediately.</div>
-                </div>
+                    <div class="form-group">
+                        <label for="serverDelay">Simulated Downstream Service Time (ms)</label>
+                        <input type="number" id="serverDelay" value="400" min="50" max="4000" step="50" onchange="updateDelay(this.value)">
+                        <div class="help-text">HTTP response duration per request. High service time causes queues to build up.</div>
+                    </div>
 
-                <div class="form-group">
-                    <label for="delayMs">Simulated Server Delay (ms)</label>
-                    <input type="number" id="delayMs" value="500" min="50" max="5000">
-                    <div class="help-text">Artificial delay for each HTTP request.</div>
-                </div>
+                    <div class="form-group">
+                        <label for="queueTimeout">Queue Timeout (ms) [0 = Off]</label>
+                        <input type="number" id="queueTimeout" value="1200" min="0" step="100" placeholder="0 = infinite">
+                        <div class="help-text">Max time a request waits in the queue before timing out (fail-fast).</div>
+                    </div>
 
-                <button id="runBtn" class="btn-primary" onclick="runSimulation()">Run Concurrency Test</button>
-                
-                <div style="margin-top: 24px; border-top: 1px solid var(--border-color); padding-top: 16px;">
-                    <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted); margin-bottom: 6px;">Terminal CLI Example:</div>
-                    <div class="code-box">node examples/client.js</div>
-                    <div class="help-text" style="margin-top:6px;">Sends requests against this server with interactive prompts.</div>
+                    <div class="form-group">
+                        <label for="maxQueueSize">Max Queue Size (maxQueueSize) [0 = Unbounded]</label>
+                        <input type="number" id="maxQueueSize" value="10" min="0" placeholder="0 = unbounded">
+                        <div class="help-text">Hard queue limit. Further requests shed immediately with QueueFullError.</div>
+                    </div>
+
+                    <div class="btn-row" style="margin-top: 14px;">
+                        <button class="btn-danger" style="width: 100%;" onclick="flushQueue()">Emergency Flush Queue (clearQueue)</button>
+                    </div>
                 </div>
             </div>
 
-            <!-- Right column: Live Visualization -->
+            <!-- Right column: Live Visualization & Logs -->
             <div>
                 <div class="stats-bar">
                     <div class="stat-item">
                         <div id="statActive" class="stat-val val-active">0</div>
-                        <div class="stat-label">Active (In-Flight)</div>
+                        <div class="stat-label">In-Flight (Active)</div>
                     </div>
                     <div class="stat-item">
                         <div id="statPending" class="stat-val val-pending">0</div>
-                        <div class="stat-label">Pending (Queued)</div>
+                        <div class="stat-label">Queued (Pending)</div>
                     </div>
                     <div class="stat-item">
                         <div id="statDone" class="stat-val val-done">0</div>
                         <div class="stat-label">Completed</div>
                     </div>
                     <div class="stat-item">
-                        <div id="statFailed" class="stat-val val-failed">0</div>
-                        <div class="stat-label">Timed Out / Dropped</div>
+                        <div id="statShed" class="stat-val val-failed">0</div>
+                        <div class="stat-label">Shed / Timed Out</div>
                     </div>
                 </div>
 
-                <div class="card" style="margin-bottom: 20px;">
+                <div class="card" style="margin-bottom: 16px;">
                     <h2>
-                        <span>Request Statuses</span>
-                        <span id="elapsedDisplay" style="font-size: 0.8rem; color: var(--text-muted); font-weight: normal;"></span>
+                        <span>Live Jobs Pipeline</span>
+                        <span id="rateIndicator" style="font-size: 0.78rem; color: var(--text-muted); font-weight: normal;">Idle</span>
                     </h2>
                     <div id="requestGrid" class="request-grid">
-                        <div style="color: var(--text-muted); font-size: 0.85rem; padding: 12px; grid-column: 1 / -1;">
-                            Click "Run Concurrency Test" to view request batch lifecycle.
+                        <div id="emptyHint" style="color: var(--text-muted); font-size: 0.85rem; padding: 16px; grid-column: 1 / -1; text-align: center;">
+                            Start continuous ingestion or click "+ 1 Job" / "+ 5 Jobs" to submit requests.
                         </div>
                     </div>
                 </div>
 
                 <div class="card">
-                    <h2>Live Event Log</h2>
+                    <h2>Live Callback Event Stream</h2>
                     <div id="terminal" class="terminal">
-                        <div class="log-entry"><span class="log-time">[System]</span>Server ready on port ${PORT}</div>
+                        <div class="log-entry"><span class="log-time">[System]</span>Server ready on port ${PORT}. Ingestion simulator initialized.</div>
                     </div>
                 </div>
             </div>
@@ -323,6 +350,121 @@ function renderHtml() {
     </div>
 
     <script>
+        // --- Client-side Bounded Work Queue Implementation (matches @cajax/axios-parallel-limit) ---
+        class ClientLimiter {
+            constructor(maxConcurrency) {
+                this.maxConcurrency = maxConcurrency;
+                this.active = 0;
+                this.queue = [];
+            }
+
+            get activeCount() { return this.active; }
+            get pendingCount() { return this.queue.length; }
+
+            setMaxConcurrency(limit) {
+                this.maxConcurrency = limit;
+                while (this.active < this.maxConcurrency && this.queue.length > 0) {
+                    this.pullNext();
+                }
+            }
+
+            clearQueue(reason) {
+                const count = this.queue.length;
+                if (count === 0) return 0;
+                const items = this.queue.splice(0, this.queue.length);
+                for (const item of items) {
+                    if (item.settled) continue;
+                    item.settled = true;
+                    if (item.timer) clearTimeout(item.timer);
+                    item.reject(reason || new Error('ERR_QUEUE_CLEARED'));
+                }
+                updateCounters();
+                return count;
+            }
+
+            acquire(context, opts = {}) {
+                if (this.active < this.maxConcurrency) {
+                    this.active++;
+                    updateCounters();
+                    log('Job #' + context.id + ' admitted immediately into slot (' + this.active + '/' + this.maxConcurrency + ' active)', 'info');
+                    return Promise.resolve(this.makeRelease());
+                }
+
+                const maxQueueSize = opts.maxQueueSize;
+                if (maxQueueSize && maxQueueSize > 0 && this.queue.length >= maxQueueSize) {
+                    log('Job #' + context.id + ' rejected immediately: maxQueueSize (' + maxQueueSize + ') exceeded', 'err');
+                    const err = new Error('ERR_QUEUE_FULL');
+                    err.name = 'QueueFullError';
+                    return Promise.reject(err);
+                }
+
+                return new Promise((resolve, reject) => {
+                    const item = {
+                        context,
+                        enqueuedAt: Date.now(),
+                        settled: false,
+                        resolve,
+                        reject,
+                        timer: null
+                    };
+
+                    const timeout = opts.queueTimeout;
+                    if (timeout && timeout > 0) {
+                        item.timer = setTimeout(() => {
+                            if (item.settled) return;
+                            item.settled = true;
+                            const idx = this.queue.indexOf(item);
+                            if (idx !== -1) this.queue.splice(idx, 1);
+                            updateCounters();
+                            const err = new Error('ERR_QUEUE_TIMEOUT');
+                            err.name = 'QueueTimeoutError';
+                            item.reject(err);
+                        }, timeout);
+                    }
+
+                    this.queue.push(item);
+                    updateCounters();
+                    log('Job #' + context.id + ' queued in position ' + this.queue.length + ' (' + this.queue.length + ' pending)', 'warn');
+                });
+            }
+
+            makeRelease() {
+                let released = false;
+                return () => {
+                    if (released) return;
+                    released = true;
+                    this.active--;
+                    updateCounters();
+                    this.pullNext();
+                };
+            }
+
+            pullNext() {
+                if (this.active >= this.maxConcurrency) return;
+                const item = this.queue.shift();
+                if (!item) return;
+
+                item.settled = true;
+                if (item.timer) clearTimeout(item.timer);
+
+                this.active++;
+                updateCounters();
+                const waitMs = Date.now() - item.enqueuedAt;
+                log('Job #' + item.context.id + ' dispatched from queue after waiting ' + waitMs + 'ms', 'info');
+                item.resolve({ release: this.makeRelease(), waitMs });
+            }
+        }
+
+        // --- Simulator State ---
+        let currentCap = 3;
+        const limiter = new ClientLimiter(currentCap);
+        let jobCounter = 0;
+        let completedCount = 0;
+        let shedCount = 0;
+        let streamTimer = null;
+        let streamRate = 4;
+        let serverDelayMs = 400;
+
         function log(msg, type = 'info') {
             const term = document.getElementById('terminal');
             const now = new Date().toTimeString().split(' ')[0];
@@ -337,210 +479,168 @@ function renderHtml() {
             term.scrollTop = term.scrollHeight;
         }
 
-        async function runSimulation() {
-            const btn = document.getElementById('runBtn');
-            const total = parseInt(document.getElementById('totalRequests').value, 10) || 10;
-            const max = parseInt(document.getElementById('maxRequests').value, 10) || 3;
+        function updateCounters() {
+            document.getElementById('statActive').textContent = limiter.activeCount;
+            document.getElementById('statPending').textContent = limiter.pendingCount;
+            document.getElementById('statDone').textContent = completedCount;
+            document.getElementById('statShed').textContent = shedCount;
+        }
+
+        function updateConcurrencyCap(val) {
+            currentCap = parseInt(val, 10);
+            document.getElementById('capDisplay').textContent = currentCap;
+            limiter.setMaxConcurrency(currentCap);
+            log('Concurrency limit dynamically adjusted to ' + currentCap, 'info');
+            updateCounters();
+        }
+
+        function updateStreamRate(val) {
+            streamRate = parseInt(val, 10);
+            document.getElementById('rateDisplay').textContent = streamRate + ' jobs/sec';
+            if (streamTimer) {
+                clearInterval(streamTimer);
+                startStreamInterval();
+            }
+        }
+
+        function updateDelay(val) {
+            serverDelayMs = Math.max(50, parseInt(val, 10) || 400);
+            log('Service delay updated to ' + serverDelayMs + 'ms', 'info');
+        }
+
+        function toggleStream() {
+            const btn = document.getElementById('streamBtn');
+            if (streamTimer) {
+                clearInterval(streamTimer);
+                streamTimer = null;
+                btn.textContent = 'Start Continuous Ingestion';
+                btn.className = 'btn-stream';
+                document.getElementById('rateIndicator').textContent = 'Stream Paused';
+                log('Continuous job ingestion stopped', 'warn');
+            } else {
+                startStreamInterval();
+                btn.textContent = 'Stop Continuous Ingestion';
+                btn.className = 'btn-stream active';
+                document.getElementById('rateIndicator').textContent = 'Ingesting ~' + streamRate + ' jobs/s';
+                log('Continuous job ingestion started at ' + streamRate + ' jobs/sec', 'success');
+            }
+        }
+
+        function startStreamInterval() {
+            const intervalMs = Math.round(1000 / streamRate);
+            streamTimer = setInterval(() => {
+                addJobs(1);
+            }, intervalMs);
+        }
+
+        function addJobs(count) {
+            const hint = document.getElementById('emptyHint');
+            if (hint) hint.remove();
+
+            for (let i = 0; i < count; i++) {
+                jobCounter++;
+                submitJob(jobCounter);
+            }
+        }
+
+        async function submitJob(id) {
+            const grid = document.getElementById('requestGrid');
+            const chip = document.createElement('div');
+            chip.className = 'req-chip state-queued';
+            chip.id = 'chip-' + id;
+            chip.innerHTML = '<div class="chip-id"><span>Job #' + id + '</span></div>' +
+                             '<div class="chip-state" id="state-' + id + '">Queued</div>' +
+                             '<div class="chip-wait" id="wait-' + id + '">In queue...</div>';
+            grid.insertBefore(chip, grid.firstChild);
+
+            // Cap visible chips to prevent DOM bloat
+            if (grid.children.length > 60) {
+                grid.removeChild(grid.lastChild);
+            }
+
             const queueTimeout = parseInt(document.getElementById('queueTimeout').value, 10) || 0;
             const maxQueueSize = parseInt(document.getElementById('maxQueueSize').value, 10) || 0;
-            const delayMs = parseInt(document.getElementById('delayMs').value, 10) || 500;
 
-            btn.disabled = true;
-            btn.textContent = 'Simulating...';
-
-            const grid = document.getElementById('requestGrid');
-            grid.innerHTML = '';
-            
-            // Build chips
-            const chips = {};
-            for (let i = 1; i <= total; i++) {
-                const chip = document.createElement('div');
-                chip.className = 'req-chip state-queued';
-                chip.id = 'chip-' + i;
-                chip.innerHTML = '<div class="chip-id"><span>Req #' + i + '</span></div><div class="chip-state" id="state-' + i + '">Queued</div><div class="chip-wait" id="wait-' + i + '">Waiting...</div>';
-                grid.appendChild(chip);
-                chips[i] = chip;
-            }
-
-            document.getElementById('statActive').textContent = '0';
-            document.getElementById('statPending').textContent = total.toString();
-            document.getElementById('statDone').textContent = '0';
-            document.getElementById('statFailed').textContent = '0';
-
-            log('Starting simulation: ' + total + ' requests (maxRequests: ' + max + ', queueTimeout: ' + (queueTimeout || 'none') + ', maxQueueSize: ' + (maxQueueSize || 'unbounded') + ')');
-
-            const startTime = Date.now();
-            const timer = setInterval(() => {
-                document.getElementById('elapsedDisplay').textContent = 'Elapsed: ' + Math.round((Date.now() - startTime) / 100) / 10 + 's';
-            }, 100);
+            const submittedAt = Date.now();
+            const waitInterval = setInterval(() => {
+                const waitEl = document.getElementById('wait-' + id);
+                if (waitEl && chip.classList.contains('state-queued')) {
+                    waitEl.textContent = 'Wait: ' + (Date.now() - submittedAt) + 'ms';
+                } else {
+                    clearInterval(waitInterval);
+                }
+            }, 80);
 
             try {
-                const response = await fetch('/api/run-simulation', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        totalRequests: total,
-                        maxRequests: max,
-                        queueTimeout: queueTimeout || undefined,
-                        maxQueueSize: maxQueueSize || undefined,
-                        delayMs: delayMs
-                    })
-                });
+                const acquired = await limiter.acquire({ id }, { queueTimeout, maxQueueSize });
+                clearInterval(waitInterval);
 
-                const data = await response.json();
-                clearInterval(timer);
+                chip.className = 'req-chip state-active';
+                const stateEl = document.getElementById('state-' + id);
+                const waitEl = document.getElementById('wait-' + id);
+                if (stateEl) stateEl.textContent = 'In-Flight';
+                if (waitEl) waitEl.textContent = 'Waited: ' + (acquired.waitMs || 0) + 'ms';
 
-                if (data.events) {
-                    for (const ev of data.events) {
-                        if (ev.type === 'activeCount') {
-                            document.getElementById('statActive').textContent = ev.count;
-                        } else if (ev.type === 'pendingCount') {
-                            document.getElementById('statPending').textContent = ev.count;
-                        } else if (ev.type === 'dispatch') {
-                            const c = chips[ev.reqId];
-                            if (c) {
-                                c.className = 'req-chip state-active';
-                                document.getElementById('state-' + ev.reqId).textContent = 'In Flight';
-                                document.getElementById('wait-' + ev.reqId).textContent = 'Waited: ' + ev.waitMs + 'ms';
-                            }
-                            log('Req #' + ev.reqId + ' dispatched after ' + ev.waitMs + 'ms queue wait');
-                        } else if (ev.type === 'timeout') {
-                            const c = chips[ev.reqId];
-                            if (c) {
-                                c.className = 'req-chip state-timeout';
-                                document.getElementById('state-' + ev.reqId).textContent = 'Queue Timeout';
-                                document.getElementById('wait-' + ev.reqId).textContent = 'Waited ' + ev.waitMs + 'ms';
-                            }
-                            log('Req #' + ev.reqId + ' timed out in queue after ' + ev.waitMs + 'ms', 'err');
-                        } else if (ev.type === 'overflow') {
-                            const c = chips[ev.reqId];
-                            if (c) {
-                                c.className = 'req-chip state-overflow';
-                                document.getElementById('state-' + ev.reqId).textContent = 'Queue Overflow';
-                                document.getElementById('wait-' + ev.reqId).textContent = 'Rejected immediately';
-                            }
-                            log('Req #' + ev.reqId + ' rejected: maxQueueSize reached', 'err');
-                        } else if (ev.type === 'completed') {
-                            const c = chips[ev.reqId];
-                            if (c) {
-                                c.className = 'req-chip state-done';
-                                document.getElementById('state-' + ev.reqId).textContent = 'Done (' + ev.duration + 'ms)';
-                            }
-                        }
-                    }
-                }
+                // Perform real HTTP request to the server delay endpoint
+                const startTime = Date.now();
+                await fetch('/api/delay?delay=' + serverDelayMs + '&jobId=' + id);
+                const duration = Date.now() - startTime;
 
-                // Final stats
-                document.getElementById('statActive').textContent = '0';
-                document.getElementById('statPending').textContent = '0';
-                document.getElementById('statDone').textContent = data.summary.succeeded;
-                document.getElementById('statFailed').textContent = data.summary.timedOut + data.summary.overflowed;
+                chip.className = 'req-chip state-done';
+                if (stateEl) stateEl.textContent = 'Done (' + duration + 'ms)';
+                completedCount++;
+                updateCounters();
+                log('Job #' + id + ' completed in ' + duration + 'ms', 'success');
 
-                log('Finished all ' + total + ' requests in ' + data.summary.totalElapsedMs + 'ms. (Succeeded: ' + data.summary.succeeded + ', TimedOut: ' + data.summary.timedOut + ', Overflow: ' + data.summary.overflowed + ')', 'success');
+                acquired.release();
             } catch (err) {
-                clearInterval(timer);
-                log('Simulation error: ' + err.message, 'err');
-            } finally {
-                btn.disabled = false;
-                btn.textContent = 'Run Concurrency Test';
+                clearInterval(waitInterval);
+                shedCount++;
+                updateCounters();
+
+                const stateEl = document.getElementById('state-' + id);
+                const waitEl = document.getElementById('wait-' + id);
+
+                if (err.name === 'QueueTimeoutError') {
+                    chip.className = 'req-chip state-timeout';
+                    if (stateEl) stateEl.textContent = 'Timed Out';
+                    if (waitEl) waitEl.textContent = 'Exceeded ' + queueTimeout + 'ms';
+                    log('Job #' + id + ' shed: queueTimeout exceeded (' + (Date.now() - submittedAt) + 'ms)', 'err');
+                } else if (err.name === 'QueueFullError') {
+                    chip.className = 'req-chip state-overflow';
+                    if (stateEl) stateEl.textContent = 'Queue Overflow';
+                    if (waitEl) waitEl.textContent = 'Rejected instantly';
+                } else {
+                    chip.className = 'req-chip state-flushed';
+                    if (stateEl) stateEl.textContent = 'Flushed';
+                    if (waitEl) waitEl.textContent = 'Cancelled';
+                    log('Job #' + id + ' cancelled via queue flush', 'warn');
+                }
             }
+        }
+
+        function flushQueue() {
+            const cleared = limiter.clearQueue(new Error('Flushed via UI'));
+            if (cleared > 0) {
+                log('Flush: removed and cancelled ' + cleared + ' jobs waiting in the queue', 'warn');
+            } else {
+                log('Flush: queue was already empty', 'info');
+            }
+        }
+
+        function resetAll() {
+            if (streamTimer) toggleStream();
+            limiter.clearQueue(new Error('Reset'));
+            jobCounter = 0;
+            completedCount = 0;
+            shedCount = 0;
+            updateCounters();
+            document.getElementById('requestGrid').innerHTML = '<div id="emptyHint" style="color: var(--text-muted); font-size: 0.85rem; padding: 16px; grid-column: 1 / -1; text-align: center;">Simulator reset. Start continuous ingestion or click "+ 1 Job" to submit requests.</div>';
+            log('Simulator reset', 'info');
         }
     </script>
 </body>
 </html>`;
-}
-
-// Executes a batch simulation using the actual axiosParallelLimit library
-async function handleRunSimulation(req, res) {
-    let bodyStr = '';
-    req.on('data', chunk => { bodyStr += chunk; });
-    req.on('end', async () => {
-        let params;
-        try {
-            params = JSON.parse(bodyStr || '{}');
-        } catch {
-            params = {};
-        }
-
-        const totalRequests = Math.min(Math.max(params.totalRequests || 10, 1), 100);
-        const maxRequests = Math.min(Math.max(params.maxRequests || 3, 1), 50);
-        const queueTimeout = params.queueTimeout && params.queueTimeout > 0 ? params.queueTimeout : undefined;
-        const maxQueueSize = params.maxQueueSize && params.maxQueueSize > 0 ? params.maxQueueSize : undefined;
-        const delayMs = params.delayMs || 300;
-
-        const events = [];
-        let reqCounter = 0;
-
-        const http = axios.create({
-            baseURL: `http://127.0.0.1:${PORT}`,
-            timeout: 15000,
-        });
-
-        axiosParallelLimit(http, {
-            maxRequests,
-            maxQueueSize,
-            queueTimeout,
-            onActiveCountChange: (count) => {
-                events.push({ type: 'activeCount', count, time: Date.now() });
-            },
-            onPendingCountChange: (count) => {
-                events.push({ type: 'pendingCount', count, time: Date.now() });
-            },
-            onDispatch: ({ config, waitMs }) => {
-                const reqId = config?.metadata?.reqId;
-                events.push({ type: 'dispatch', reqId, waitMs, time: Date.now() });
-            },
-            onQueueTimeout: ({ config, waitMs }) => {
-                const reqId = config?.metadata?.reqId;
-                events.push({ type: 'timeout', reqId, waitMs, time: Date.now() });
-            },
-            onQueueOverflow: ({ config }) => {
-                const reqId = config?.metadata?.reqId;
-                events.push({ type: 'overflow', reqId, time: Date.now() });
-            },
-        });
-
-        const start = Date.now();
-        const promises = [];
-        let succeeded = 0;
-        let timedOut = 0;
-        let overflowed = 0;
-
-        for (let i = 1; i <= totalRequests; i++) {
-            const reqId = i;
-            const p = http.get(`/api/delay?delay=${delayMs}&reqId=${reqId}`, {
-                metadata: { reqId },
-            }).then(response => {
-                succeeded++;
-                events.push({ type: 'completed', reqId, duration: delayMs, time: Date.now() });
-            }).catch(err => {
-                if (isQueueTimeoutError(err)) {
-                    timedOut++;
-                } else if (isQueueFullError(err)) {
-                    overflowed++;
-                } else {
-                    events.push({ type: 'error', reqId, error: err.message, time: Date.now() });
-                }
-            });
-            promises.push(p);
-        }
-
-        await Promise.all(promises);
-        const totalElapsedMs = Date.now() - start;
-
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-            events,
-            summary: {
-                totalRequests,
-                maxRequests,
-                succeeded,
-                timedOut,
-                overflowed,
-                totalElapsedMs
-            }
-        }));
-    });
 }
 
 async function run() {
@@ -549,11 +649,6 @@ async function run() {
     const server = http.createServer(async (req, res) => {
         const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
         const accept = req.headers.accept || '';
-
-        // API simulation runner
-        if (req.method === 'POST' && url.pathname === '/api/run-simulation') {
-            return handleRunSimulation(req, res);
-        }
 
         // Web Dashboard if accessed by browser
         const isHtmlRequest = accept.includes('text/html') && !accept.includes('application/json');
