@@ -47,6 +47,14 @@ declare module 'axios' {
          */
         queueTimeout?: number;
     }
+    interface InternalAxiosRequestConfig {
+        /**
+         * Per-request override (in milliseconds) for the instance-level
+         * `queueTimeout`. Covers queue-wait time only. When omitted, the
+         * instance-level option (if any) applies.
+         */
+        queueTimeout?: number;
+    }
 }
 /**
  * Payload passed to the observability callbacks ({@link AxiosParallelLimitOptions.onDispatch},

@@ -91,7 +91,23 @@ export class BoundedLimiter<T> {
     private readonly queue: QueueItem<T>[] = [];
     private active = 0;
 
-    constructor(private readonly options: BoundedLimiterOptions<T>) {}
+    constructor(private readonly options: BoundedLimiterOptions<T>) {
+        if (!Number.isFinite(options.maxConcurrency) || options.maxConcurrency < 1) {
+            throw new RangeError(
+                `maxConcurrency must be a positive number >= 1, received: ${options.maxConcurrency}`,
+            );
+        }
+        if (options.maxQueueSize !== undefined && (!Number.isFinite(options.maxQueueSize) || options.maxQueueSize < 0)) {
+            throw new RangeError(
+                `maxQueueSize must be a non-negative number >= 0, received: ${options.maxQueueSize}`,
+            );
+        }
+        if (options.queueTimeout !== undefined && (!Number.isFinite(options.queueTimeout) || options.queueTimeout < 0)) {
+            throw new RangeError(
+                `queueTimeout must be a non-negative number >= 0, received: ${options.queueTimeout}`,
+            );
+        }
+    }
 
     /** Tasks currently holding a slot. */
     get activeCount(): number {
@@ -137,7 +153,11 @@ export class BoundedLimiter<T> {
 
             const timeout = typeof opts.queueTimeout === 'number' ? opts.queueTimeout : this.options.queueTimeout;
             if (timeout !== undefined) {
-                item.timer = setTimeout(() => this.onTimeout(item), timeout);
+                const timer = setTimeout(() => this.onTimeout(item), timeout);
+                if (typeof timer === 'object' && timer !== null && 'unref' in timer && typeof timer.unref === 'function') {
+                    timer.unref();
+                }
+                item.timer = timer;
             }
             if (cancellation) {
                 item.detachAbort = cancellation.subscribe(() => this.onAbort(item));

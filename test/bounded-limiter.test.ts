@@ -412,4 +412,19 @@ describe('BoundedLimiter — invariants', () => {
         expect(limiter.pendingCount).toBe(0);
         expect(jest.getTimerCount()).toBe(0);
     });
+
+    test('validates constructor options and rejects invalid boundaries', () => {
+        expect(() => makeLimiter({ maxConcurrency: 0 })).toThrow(RangeError);
+        expect(() => makeLimiter({ maxConcurrency: -1 })).toThrow(RangeError);
+        expect(() => makeLimiter({ maxConcurrency: NaN })).toThrow(RangeError);
+
+        expect(() => makeLimiter({ maxConcurrency: 2, maxQueueSize: -1 })).toThrow(RangeError);
+        expect(() => makeLimiter({ maxConcurrency: 2, maxQueueSize: NaN })).toThrow(RangeError);
+
+        expect(() => makeLimiter({ maxConcurrency: 2, queueTimeout: -1 })).toThrow(RangeError);
+        expect(() => makeLimiter({ maxConcurrency: 2, queueTimeout: NaN })).toThrow(RangeError);
+
+        // Valid boundary zero for queue size/timeout should not throw
+        expect(() => makeLimiter({ maxConcurrency: 2, maxQueueSize: 0, queueTimeout: 0 })).not.toThrow();
+    });
 });
