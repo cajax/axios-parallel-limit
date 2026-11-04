@@ -8,6 +8,9 @@ const rl = readline.createInterface({
 });
 
 const ask = (query, defaultVal) => new Promise(resolve => {
+    if (!process.stdin.isTTY) {
+        return resolve(defaultVal);
+    }
     rl.question(`${query} (default: ${defaultVal}): `, answer => {
         resolve(answer.trim() || defaultVal);
     });
@@ -24,8 +27,9 @@ async function run() {
 
     console.log(`\nStarting ${totalRequests} requests with limit ${parallelLimit}...\n`);
 
+    const port = process.env.PORT || '3000';
     const http = axios.create({
-        baseURL: 'http://localhost:3000'
+        baseURL: process.env.SERVER_URL || `http://localhost:${port}`
     });
 
     // Let's use a shared state for logging to make it look like a status bar

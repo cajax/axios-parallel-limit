@@ -17,6 +17,9 @@
     }
   },
   "scripts": {
+    "dev": "node examples/server.js",
+    "start": "node examples/server.js",
+    "lint": "tsc --noEmit",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "build": "tsup"
   },
