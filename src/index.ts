@@ -90,6 +90,14 @@ declare module 'axios' {
          */
         queueTimeout?: number;
     }
+    interface InternalAxiosRequestConfig {
+        /**
+         * Per-request override (in milliseconds) for the instance-level
+         * `queueTimeout`. Covers queue-wait time only. When omitted, the
+         * instance-level option (if any) applies.
+         */
+        queueTimeout?: number;
+    }
 }
 
 /**
@@ -160,11 +168,7 @@ export interface AxiosParallelLimitOptions {
 
 /** The standard Axios cancellation error (so `axios.isCancel` recognizes it). */
 function cancelError(config: InternalAxiosRequestConfig): CanceledError<unknown> {
-    // Axios's runtime CanceledError ctor is (message, config, request); its
-    // published type inherits AxiosError's (message, code, config, ...), so we
-    // cast the positional `config` to satisfy the type while staying correct at
-    // runtime (sets code ERR_CANCELED, the __CANCEL__ marker, and attaches config).
-    return new CanceledError(undefined, config as unknown as string);
+    return new CanceledError(undefined, config);
 }
 
 /**
@@ -245,6 +249,12 @@ export function axiosParallelLimit(
     axiosInstance: AxiosInstance,
     options: AxiosParallelLimitOptions,
 ): void {
+    if (!Number.isFinite(options.maxRequests) || options.maxRequests < 1) {
+        throw new RangeError(
+            `maxRequests must be a positive number >= 1, received: ${options.maxRequests}`,
+        );
+    }
+
     // Unique per invocation (never `Symbol.for` — must NOT be shared across calls,
     // so two limiters on one instance each recognise only their own wrapper). Tags
     // the adapter wrapper this call installs so the interceptor can detect it.
@@ -274,7 +284,7 @@ export function axiosParallelLimit(
     });
 
     axiosInstance.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-        const originalAdapter = config.adapter;
+        const originalAdapter = config.adapter ?? axiosInstance.defaults.adapter;
 
         if (!originalAdapter) {
             return config;

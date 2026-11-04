@@ -76,6 +76,21 @@ var BoundedLimiter = class {
       this.notifyPending();
       item.reject(this.options.createAbortError(item.context));
     };
+    if (!Number.isFinite(options.maxConcurrency) || options.maxConcurrency < 1) {
+      throw new RangeError(
+        `maxConcurrency must be a positive number >= 1, received: ${options.maxConcurrency}`
+      );
+    }
+    if (options.maxQueueSize !== void 0 && (!Number.isFinite(options.maxQueueSize) || options.maxQueueSize < 0)) {
+      throw new RangeError(
+        `maxQueueSize must be a non-negative number >= 0, received: ${options.maxQueueSize}`
+      );
+    }
+    if (options.queueTimeout !== void 0 && (!Number.isFinite(options.queueTimeout) || options.queueTimeout < 0)) {
+      throw new RangeError(
+        `queueTimeout must be a non-negative number >= 0, received: ${options.queueTimeout}`
+      );
+    }
   }
   /** Tasks currently holding a slot. */
   get activeCount() {
@@ -110,7 +125,11 @@ var BoundedLimiter = class {
       const item = { context, enqueuedAt: now(), settled: false, resolve, reject };
       const timeout = typeof opts.queueTimeout === "number" ? opts.queueTimeout : this.options.queueTimeout;
       if (timeout !== void 0) {
-        item.timer = setTimeout(() => this.onTimeout(item), timeout);
+        const timer = setTimeout(() => this.onTimeout(item), timeout);
+        if (typeof timer === "object" && timer !== null && "unref" in timer && typeof timer.unref === "function") {
+          timer.unref();
+        }
+        item.timer = timer;
       }
       if (cancellation) {
         item.detachAbort = cancellation.subscribe(() => this.onAbort(item));
@@ -198,7 +217,12 @@ function cancellationFor(config) {
   };
 }
 function axiosParallelLimit(axiosInstance, options) {
-  const WRAPPED = Symbol("axiosParallelLimitWrapped");
+  if (!Number.isFinite(options.maxRequests) || options.maxRequests < 1) {
+    throw new RangeError(
+      `maxRequests must be a positive number >= 1, received: ${options.maxRequests}`
+    );
+  }
+  const WRAPPED = /* @__PURE__ */ Symbol("axiosParallelLimitWrapped");
   const toQueueInfo = (cb) => cb ? (info) => cb({ config: info.context, waitMs: info.waitMs, queueSize: info.queueSize }) : void 0;
   const limiter = new BoundedLimiter({
     maxConcurrency: options.maxRequests,
@@ -214,7 +238,7 @@ function axiosParallelLimit(axiosInstance, options) {
     createAbortError: (config) => cancelError(config)
   });
   axiosInstance.interceptors.request.use((config) => {
-    const originalAdapter = config.adapter;
+    const originalAdapter = config.adapter ?? axiosInstance.defaults.adapter;
     if (!originalAdapter) {
       return config;
     }

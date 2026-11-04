@@ -127,4 +127,47 @@ describe('axiosParallelLimit', () => {
         const saturatedCounts = activeCounts.filter(c => c === 2).length;
         expect(saturatedCounts).toBeGreaterThan(1);
     });
+
+    test('should throw RangeError if maxRequests is invalid', () => {
+        expect(() => axiosParallelLimit(instance, { maxRequests: 0 })).toThrow(RangeError);
+        expect(() => axiosParallelLimit(instance, { maxRequests: -5 })).toThrow(RangeError);
+        expect(() => axiosParallelLimit(instance, { maxRequests: NaN })).toThrow(RangeError);
+    });
+
+    test('should properly limit requests when config.adapter is undefined and falls back to defaults.adapter', async () => {
+        const customInstance = axios.create();
+        let adapterInvocations = 0;
+        let concurrentInvocations = 0;
+        let maxConcurrent = 0;
+
+        // Set adapter on defaults, without an adapter directly on config
+        customInstance.defaults.adapter = async (cfg) => {
+            adapterInvocations++;
+            concurrentInvocations++;
+            maxConcurrent = Math.max(maxConcurrent, concurrentInvocations);
+            await new Promise(r => setTimeout(r, 40));
+            concurrentInvocations--;
+            return {
+                data: 'ok',
+                status: 200,
+                statusText: 'OK',
+                headers: {},
+                config: cfg
+            };
+        };
+
+        axiosParallelLimit(customInstance, { maxRequests: 2 });
+
+        const requests = [
+            customInstance.get('/item1'),
+            customInstance.get('/item2'),
+            customInstance.get('/item3'),
+            customInstance.get('/item4'),
+        ];
+
+        await Promise.all(requests);
+
+        expect(adapterInvocations).toBe(4);
+        expect(maxConcurrent).toBe(2);
+    });
 });
