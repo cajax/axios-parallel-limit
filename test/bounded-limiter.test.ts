@@ -427,4 +427,51 @@ describe('BoundedLimiter — invariants', () => {
         // Valid boundary zero for queue size/timeout should not throw
         expect(() => makeLimiter({ maxConcurrency: 2, maxQueueSize: 0, queueTimeout: 0 })).not.toThrow();
     });
+
+    test('dispatches higher priority queued tasks before lower priority tasks', async () => {
+        const { limiter } = makeLimiter({ maxConcurrency: 1 });
+
+        // 'a' consumes the single slot
+        const a = track(limiter.acquire('a'));
+        await flushUntil(() => a.granted, 'a granted');
+
+        // Queue tasks with different priorities:
+        // b: default priority 0
+        // c: priority 5
+        // d: priority 10 (highest)
+        // e: priority 5 (equal to c, should run after c)
+        const b = track(limiter.acquire('b', { priority: 0 }));
+        const c = track(limiter.acquire('c', { priority: 5 }));
+        const d = track(limiter.acquire('d', { priority: 10 }));
+        const e = track(limiter.acquire('e', { priority: 5 }));
+
+        await flushUntil(() => limiter.pendingCount === 4, 'all 4 queued');
+
+        const dispatchOrder: string[] = [];
+
+        // Release 'a', highest priority 'd' (10) must be dispatched first
+        a.release!();
+        await flushUntil(() => d.granted, 'd dispatched');
+        dispatchOrder.push('d');
+
+        // Release 'd', 'c' (5) must be dispatched next (before 'e' due to FIFO on equal priority)
+        d.release!();
+        await flushUntil(() => c.granted, 'c dispatched');
+        dispatchOrder.push('c');
+
+        // Release 'c', 'e' (5) must be dispatched next
+        c.release!();
+        await flushUntil(() => e.granted, 'e dispatched');
+        dispatchOrder.push('e');
+
+        // Release 'e', 'b' (0) dispatched last
+        e.release!();
+        await flushUntil(() => b.granted, 'b dispatched');
+        dispatchOrder.push('b');
+
+        b.release!();
+        await flushUntil(() => limiter.activeCount === 0, 'drained');
+
+        expect(dispatchOrder).toEqual(['d', 'c', 'e', 'b']);
+    });
 });

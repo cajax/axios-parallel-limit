@@ -170,4 +170,31 @@ describe('axiosParallelLimit', () => {
         expect(adapterInvocations).toBe(4);
         expect(maxConcurrent).toBe(2);
     });
+
+    test('should dispatch queued Axios requests respecting config.priority', async () => {
+        const dispatchOrder: string[] = [];
+
+        mock.onGet(/\/job\/(.+)/).reply(async (config) => {
+            const id = config.url?.split('/').pop() || '';
+            dispatchOrder.push(id);
+            await new Promise(r => setTimeout(r, 40));
+            return [200, id];
+        });
+
+        axiosParallelLimit(instance, { maxRequests: 1 });
+
+        // Fire initial request that immediately holds the 1 slot
+        const pInitial = instance.get('/job/initial');
+        await new Promise(r => setTimeout(r, 5));
+
+        // Queue requests with different priorities
+        const pLow = instance.get('/job/low', { priority: 0 });
+        const pMedium = instance.get('/job/medium', { priority: 5 });
+        const pHigh = instance.get('/job/high', { priority: 10 });
+
+        await Promise.all([pInitial, pLow, pMedium, pHigh]);
+
+        // initial -> high (10) -> medium (5) -> low (0)
+        expect(dispatchOrder).toEqual(['initial', 'high', 'medium', 'low']);
+    });
 });

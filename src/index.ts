@@ -89,6 +89,11 @@ declare module 'axios' {
          * instance-level option (if any) applies.
          */
         queueTimeout?: number;
+        /**
+         * Relative priority in the waiting queue (higher values are dispatched first).
+         * Requests with equal priority preserve FIFO order. Default: 0.
+         */
+        priority?: number;
     }
     interface InternalAxiosRequestConfig {
         /**
@@ -97,6 +102,11 @@ declare module 'axios' {
          * instance-level option (if any) applies.
          */
         queueTimeout?: number;
+        /**
+         * Relative priority in the waiting queue (higher values are dispatched first).
+         * Requests with equal priority preserve FIFO order. Default: 0.
+         */
+        priority?: number;
     }
 }
 
@@ -310,6 +320,7 @@ export function axiosParallelLimit(
             const release = await limiter.acquire(adapterConfig, {
                 queueTimeout: adapterConfig.queueTimeout,
                 cancellation: cancellationFor(adapterConfig),
+                priority: adapterConfig.priority,
             });
             try {
                 return await runOriginalAdapter(originalAdapter, adapterConfig);

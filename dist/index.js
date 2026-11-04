@@ -10,6 +10,31 @@ var BoundedLimiter = class {
     this.options = options;
     this.queue = [];
     this.active = 0;
+    /**
+     * Inserts an item into the queue while preserving stable priority ordering.
+     * Higher priority items precede lower ones. Equal priority items stay in FIFO order.
+     */
+    this.insertQueueItem = (item) => {
+      if (this.queue.length === 0 || item.priority <= this.queue[this.queue.length - 1].priority) {
+        this.queue.push(item);
+        return;
+      }
+      if (item.priority > this.queue[0].priority) {
+        this.queue.unshift(item);
+        return;
+      }
+      let low = 0;
+      let high = this.queue.length;
+      while (low < high) {
+        const mid = low + high >>> 1;
+        if (this.queue[mid].priority >= item.priority) {
+          low = mid + 1;
+        } else {
+          high = mid;
+        }
+      }
+      this.queue.splice(low, 0, item);
+    };
     this.notifyActive = () => {
       this.options.onActiveCountChange?.(this.active);
     };
@@ -122,7 +147,8 @@ var BoundedLimiter = class {
       return Promise.reject(this.options.createOverflowError(context));
     }
     return new Promise((resolve, reject) => {
-      const item = { context, enqueuedAt: now(), settled: false, resolve, reject };
+      const priority = typeof opts.priority === "number" && Number.isFinite(opts.priority) ? opts.priority : 0;
+      const item = { context, priority, enqueuedAt: now(), settled: false, resolve, reject };
       const timeout = typeof opts.queueTimeout === "number" ? opts.queueTimeout : this.options.queueTimeout;
       if (timeout !== void 0) {
         const timer = setTimeout(() => this.onTimeout(item), timeout);
@@ -134,7 +160,7 @@ var BoundedLimiter = class {
       if (cancellation) {
         item.detachAbort = cancellation.subscribe(() => this.onAbort(item));
       }
-      this.queue.push(item);
+      this.insertQueueItem(item);
       this.notifyPending();
     });
   }
@@ -249,7 +275,8 @@ function axiosParallelLimit(axiosInstance, options) {
     const wrapped = async (adapterConfig) => {
       const release = await limiter.acquire(adapterConfig, {
         queueTimeout: adapterConfig.queueTimeout,
-        cancellation: cancellationFor(adapterConfig)
+        cancellation: cancellationFor(adapterConfig),
+        priority: adapterConfig.priority
       });
       try {
         return await runOriginalAdapter(originalAdapter, adapterConfig);
