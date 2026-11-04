@@ -474,4 +474,52 @@ describe('BoundedLimiter — invariants', () => {
 
         expect(dispatchOrder).toEqual(['d', 'c', 'e', 'b']);
     });
+
+    test('dynamically adjusts concurrency with setMaxConcurrency', async () => {
+        const { limiter, events } = makeLimiter({ maxConcurrency: 1 });
+
+        const a = track(limiter.acquire('a'));
+        await flushUntil(() => a.granted, 'a granted');
+        const b = track(limiter.acquire('b'));
+        const c = track(limiter.acquire('c'));
+        await flushUntil(() => limiter.pendingCount === 2, 'b and c queued');
+
+        expect(limiter.activeCount).toBe(1);
+        expect(limiter.pendingCount).toBe(2);
+
+        // Scale concurrency up to 3: both b and c should immediately be granted
+        limiter.setMaxConcurrency(3);
+        await flushUntil(() => b.granted && c.granted, 'b and c dispatched on scale up');
+
+        expect(limiter.activeCount).toBe(3);
+        expect(limiter.pendingCount).toBe(0);
+
+        a.release!();
+        b.release!();
+        c.release!();
+
+        await flushUntil(() => limiter.activeCount === 0, 'all drained');
+    });
+
+    test('clears waiting queue with clearQueue', async () => {
+        const { limiter } = makeLimiter({ maxConcurrency: 1 });
+
+        const a = track(limiter.acquire('a'));
+        await flushUntil(() => a.granted, 'a granted');
+        const b = track(limiter.acquire('b'));
+        const c = track(limiter.acquire('c'));
+        await flushUntil(() => limiter.pendingCount === 2, 'b and c queued');
+
+        const cleared = limiter.clearQueue(new Error('manual queue cancellation'));
+        expect(cleared).toBe(2);
+        expect(limiter.pendingCount).toBe(0);
+        expect(limiter.activeCount).toBe(1); // 'a' is still running
+
+        await flushUntil(() => b.done && c.done, 'b and c rejected');
+        expect(b.error).toBeInstanceOf(Error);
+        expect(c.error).toBeInstanceOf(Error);
+
+        a.release!();
+        await flushUntil(() => limiter.activeCount === 0, 'a finished');
+    });
 });

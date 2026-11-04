@@ -197,4 +197,41 @@ describe('axiosParallelLimit', () => {
         // initial -> high (10) -> medium (5) -> low (0)
         expect(dispatchOrder).toEqual(['initial', 'high', 'medium', 'low']);
     });
+
+    test('returns controller to inspect and update concurrency and clear queue', async () => {
+        let active = 0;
+        mock.onGet('/slow').reply(async () => {
+            active++;
+            await new Promise(r => setTimeout(r, 60));
+            active--;
+            return [200, 'ok'];
+        });
+
+        const controller = axiosParallelLimit(instance, { maxRequests: 1 });
+        expect(controller.maxRequests).toBe(1);
+        expect(controller.activeCount).toBe(0);
+        expect(controller.pendingCount).toBe(0);
+
+        const p1 = instance.get('/slow');
+        const p2 = instance.get('/slow');
+        const p3 = instance.get('/slow');
+
+        await new Promise(r => setTimeout(r, 10));
+
+        expect(controller.activeCount).toBe(1);
+        expect(controller.pendingCount).toBe(2);
+
+        // Clear remaining queue
+        const cleared = controller.clearQueue();
+        expect(cleared).toBe(2);
+        expect(controller.pendingCount).toBe(0);
+
+        const [r1, r2, r3] = await Promise.allSettled([p1, p2, p3]);
+
+        expect(r1.status).toBe('fulfilled');
+        expect(r2.status).toBe('rejected');
+        expect(r3.status).toBe('rejected');
+
+        expect(controller.activeCount).toBe(0);
+    });
 });
