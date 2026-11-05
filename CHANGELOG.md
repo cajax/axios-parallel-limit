@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`AxiosParallelLimitController`**: `axiosParallelLimit` now returns a controller handle with runtime observability and management capabilities:
+  - `activeCount`: current number of in-flight requests.
+  - `pendingCount`: current number of requests waiting in the queue.
+  - `maxRequests`: current concurrency cap.
+  - `setMaxConcurrency(limit: number)`: dynamically resize concurrency at runtime without losing queued tasks.
+  - `clearQueue(reason?)`: purge and reject all pending queued requests cleanly (e.g. on user logout or page transition).
+- **Per-Request Priority Queueing**: Pass `priority?: number` on individual request configs (`axios.get(url, { priority: 10 })`). High-priority requests leapfrog lower-priority background tasks in the queue; requests of identical priority preserve strict FIFO ordering.
+- **Strict Input Validation**: Fail-fast validation of initialization options (`maxRequests >= 1`, `maxQueueSize >= 0`, `queueTimeout >= 0`) throwing typed `RangeError` / `TypeError`.
+- **Timer `unref()`**: Node.js queue timers are unreferenced so pending queued items do not prevent process shutdown.
+- **Interactive Simulator**: Included visual web dashboard (`examples/server.js`) for testing streaming load, burst traffic, and dynamic resizing.
+
 ## [1.1.1] - 2026-06-02
 
 ### Fixed
