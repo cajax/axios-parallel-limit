@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `clearQueue(reason?)`: purge and reject all pending queued requests cleanly (e.g. on user logout or page transition).
 - **Per-Request Priority Queueing**: Pass `priority?: number` on individual request configs (`axios.get(url, { priority: 10 })`). High-priority requests leapfrog lower-priority background tasks in the queue; requests of identical priority preserve strict FIFO ordering.
 - **Strict Input Validation**: Fail-fast validation of initialization options (`maxRequests >= 1`, `maxQueueSize >= 0`, `queueTimeout >= 0`) throwing typed `RangeError` / `TypeError`.
-- **Timer `unref()`**: Node.js queue timers are unreferenced so pending queued items do not prevent process shutdown.
+- **Adaptive HTTP 429 Backoff & Rate Limiting**: Pass `adaptiveBackoff: true | AdaptiveBackoffOptions` to automatically throttle concurrency (AIMD) on HTTP 429 responses, parse RFC-standard `Retry-After` headers (integer seconds or HTTP-dates), temporarily suspend queue dispatch without dropping requests, and ramp concurrency back up upon consecutive successful requests.
+- **Controller Pause / Resume**: Added `controller.pause(ms)`, `controller.resume()`, `controller.resetAdaptiveBackoff()`, `controller.isPaused`, and `controller.targetConcurrency`.
 - **Interactive Simulator**: Included visual web dashboard (`examples/server.js`) for testing streaming load, burst traffic, and dynamic resizing.
 
 ## [1.1.1] - 2026-06-02

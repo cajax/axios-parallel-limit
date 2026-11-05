@@ -10,6 +10,7 @@ var BoundedLimiter = class {
     this.options = options;
     this.queue = [];
     this.active = 0;
+    this.pausedUntil = 0;
     /**
      * Inserts an item into the queue while preserving stable priority ordering.
      * Higher priority items precede lower ones. Equal priority items stay in FIFO order.
@@ -73,7 +74,7 @@ var BoundedLimiter = class {
     };
     /** Promote the next queued task into a freed slot, if any. */
     this.pullNext = () => {
-      if (this.active >= this._maxConcurrency) return;
+      if (this.isPaused || this.active >= this._maxConcurrency) return;
       const item = this.queue.shift();
       if (!item) return;
       item.settled = true;
@@ -130,6 +131,51 @@ var BoundedLimiter = class {
   get maxConcurrency() {
     return this._maxConcurrency;
   }
+  /** Whether queue dispatch is temporarily paused in a backoff cooldown. */
+  get isPaused() {
+    return this.pausedUntil > now();
+  }
+  /** Timestamp (epoch ms) until which queue dispatch is paused. */
+  get pausedUntilTimestamp() {
+    return this.pausedUntil;
+  }
+  /**
+   * Pause dispatching tasks from the queue for `durationMs` milliseconds.
+   * In-flight tasks continue running, but queued tasks wait until the cooldown expires.
+   */
+  pause(durationMs) {
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+      return;
+    }
+    const until = now() + durationMs;
+    this.pausedUntil = until;
+    if (this.pauseTimer) {
+      clearTimeout(this.pauseTimer);
+    }
+    this.pauseTimer = setTimeout(() => {
+      this.pausedUntil = 0;
+      this.pauseTimer = void 0;
+      while (!this.isPaused && this.active < this._maxConcurrency && this.queue.length > 0) {
+        this.pullNext();
+      }
+    }, durationMs);
+    if (typeof this.pauseTimer === "object" && this.pauseTimer !== null && "unref" in this.pauseTimer && typeof this.pauseTimer.unref === "function") {
+      this.pauseTimer.unref();
+    }
+  }
+  /**
+   * Resume queue dispatch immediately if paused.
+   */
+  resume() {
+    if (this.pauseTimer) {
+      clearTimeout(this.pauseTimer);
+      this.pauseTimer = void 0;
+    }
+    this.pausedUntil = 0;
+    while (!this.isPaused && this.active < this._maxConcurrency && this.queue.length > 0) {
+      this.pullNext();
+    }
+  }
   /**
    * Dynamically update the concurrency limit at runtime.
    * If increased, queued tasks are immediately dispatched into available slots.
@@ -141,7 +187,7 @@ var BoundedLimiter = class {
       );
     }
     this._maxConcurrency = limit;
-    while (this.active < this._maxConcurrency && this.queue.length > 0) {
+    while (!this.isPaused && this.active < this._maxConcurrency && this.queue.length > 0) {
       this.pullNext();
     }
   }
@@ -169,7 +215,7 @@ var BoundedLimiter = class {
    * cancellation while queued.
    */
   acquire(context, opts = {}) {
-    if (this.active < this._maxConcurrency) {
+    if (!this.isPaused && this.active < this._maxConcurrency) {
       this.active++;
       this.notifyActive();
       this.emit(this.options.onDispatch, context, 0);
@@ -281,6 +327,37 @@ function cancellationFor(config) {
     }
   };
 }
+function isHttp429(error) {
+  if (!error || typeof error !== "object") return false;
+  const err = error;
+  return err.response?.status === 429 || err.status === 429;
+}
+function getHeader(headers, name) {
+  if (!headers || typeof headers !== "object") return void 0;
+  const h = headers;
+  if (typeof h.get === "function") {
+    return h.get(name) ?? h.get(name.toLowerCase());
+  }
+  return h[name] ?? h[name.toLowerCase()] ?? h[name.toUpperCase()];
+}
+function parseRetryAfter(header, fallbackMs, maxMs) {
+  if (typeof header === "number" && Number.isFinite(header)) {
+    return Math.min(Math.max(0, header * 1e3), maxMs);
+  }
+  if (typeof header === "string") {
+    const trimmed = header.trim();
+    if (/^\d+$/.test(trimmed)) {
+      const secs = parseInt(trimmed, 10);
+      return Math.min(Math.max(0, secs * 1e3), maxMs);
+    }
+    const parsedDate = Date.parse(trimmed);
+    if (!Number.isNaN(parsedDate)) {
+      const diff = parsedDate - Date.now();
+      return Math.min(Math.max(0, diff), maxMs);
+    }
+  }
+  return Math.min(Math.max(0, fallbackMs), maxMs);
+}
 function axiosParallelLimit(axiosInstance, options) {
   if (!Number.isFinite(options.maxRequests) || options.maxRequests < 1) {
     throw new RangeError(
@@ -302,6 +379,68 @@ function axiosParallelLimit(axiosInstance, options) {
     createOverflowError: (config) => new QueueFullError(config),
     createAbortError: (config) => cancelError(config)
   });
+  let targetConcurrency = options.maxRequests;
+  let consecutiveSuccesses = 0;
+  let lastThrottleTime = 0;
+  const backoffConfig = options.adaptiveBackoff ? typeof options.adaptiveBackoff === "object" ? options.adaptiveBackoff : {} : null;
+  if (backoffConfig) {
+    const minConcurrency = backoffConfig.minConcurrency ?? 1;
+    const fallbackCooldownMs = backoffConfig.fallbackCooldownMs ?? 1e3;
+    const maxCooldownMs = backoffConfig.maxCooldownMs ?? 6e4;
+    const successStep = backoffConfig.successStep ?? 5;
+    const decreaseFactor = backoffConfig.decreaseFactor ?? 0.5;
+    const handle429 = (error) => {
+      const nowTime = Date.now();
+      const rawHeader = error && typeof error === "object" && error.response ? getHeader(error.response.headers, "retry-after") : void 0;
+      const cooldownMs = parseRetryAfter(rawHeader, fallbackCooldownMs, maxCooldownMs);
+      consecutiveSuccesses = 0;
+      limiter.pause(cooldownMs);
+      const prevConcurrency = limiter.maxConcurrency;
+      let newConcurrency = prevConcurrency;
+      if (nowTime - lastThrottleTime > 200) {
+        newConcurrency = Math.max(minConcurrency, Math.floor(prevConcurrency * decreaseFactor));
+        if (newConcurrency !== prevConcurrency) {
+          limiter.setMaxConcurrency(newConcurrency);
+        }
+        lastThrottleTime = nowTime;
+      }
+      backoffConfig.onThrottle?.({
+        status: 429,
+        retryAfterMs: cooldownMs,
+        previousConcurrency: prevConcurrency,
+        newConcurrency,
+        pausedUntil: Date.now() + cooldownMs
+      });
+    };
+    const handleSuccess = () => {
+      if (limiter.maxConcurrency < targetConcurrency) {
+        consecutiveSuccesses++;
+        if (consecutiveSuccesses >= successStep) {
+          consecutiveSuccesses = 0;
+          const newConcurrency = Math.min(targetConcurrency, limiter.maxConcurrency + 1);
+          limiter.setMaxConcurrency(newConcurrency);
+          backoffConfig.onRampUp?.({
+            concurrency: newConcurrency,
+            targetConcurrency
+          });
+        }
+      }
+    };
+    axiosInstance.interceptors.response.use(
+      (response) => {
+        handleSuccess();
+        return response;
+      },
+      (error) => {
+        if (isHttp429(error)) {
+          handle429(error);
+        } else if (error && typeof error === "object" && error.response && typeof error.response.status === "number" && error.response.status < 500) {
+          handleSuccess();
+        }
+        return Promise.reject(error);
+      }
+    );
+  }
   axiosInstance.interceptors.request.use((config) => {
     const originalAdapter = config.adapter ?? axiosInstance.defaults.adapter;
     if (!originalAdapter) {
@@ -336,11 +475,29 @@ function axiosParallelLimit(axiosInstance, options) {
     get maxRequests() {
       return limiter.maxConcurrency;
     },
+    get targetConcurrency() {
+      return targetConcurrency;
+    },
+    get isPaused() {
+      return limiter.isPaused;
+    },
     setMaxConcurrency(limit) {
+      targetConcurrency = limit;
       limiter.setMaxConcurrency(limit);
     },
     clearQueue(reason) {
       return limiter.clearQueue(reason);
+    },
+    pause(durationMs) {
+      limiter.pause(durationMs);
+    },
+    resume() {
+      limiter.resume();
+    },
+    resetAdaptiveBackoff() {
+      limiter.resume();
+      consecutiveSuccesses = 0;
+      limiter.setMaxConcurrency(targetConcurrency);
     }
   };
 }
@@ -387,6 +544,7 @@ export {
   QueueTimeoutError,
   axiosParallelLimit,
   isQueueFullError,
-  isQueueTimeoutError
+  isQueueTimeoutError,
+  parseRetryAfter
 };
 //# sourceMappingURL=index.js.map

@@ -9,7 +9,8 @@ It lets you control the concurrency of your HTTP requests so your application ne
 ## Key Features
 
 - **Strict Concurrency Cap**: Limit simultaneous in-flight requests (`maxRequests >= 1`).
-- **Dynamic Controller API**: Inspect `activeCount`, `pendingCount`, resize concurrency on the fly (`setMaxConcurrency`), or cancel queued requests (`clearQueue`).
+- **Adaptive HTTP 429 Backoff (AIMD)**: Automatically throttle concurrency on `429 Too Many Requests`, pause queue dispatch according to RFC-standard `Retry-After` headers, and ramp concurrency back up additively as requests succeed.
+- **Dynamic Controller API**: Inspect `activeCount`, `pendingCount`, resize concurrency on the fly (`setMaxConcurrency`), pause/resume, or cancel queued requests (`clearQueue`).
 - **Bounded Queue & Fail-Fast Backpressure**: Bound queue depth (`maxQueueSize`) to shed load immediately rather than running out of memory (OOM).
 - **Queue-Wait Deadline**: Evict and fail requests that wait too long for a free slot (`queueTimeout`), distinct from HTTP execution timeouts.
 - **Per-Request Priority Queueing**: Prioritize high-urgency requests (`priority: number`) to leapfrog lower-priority background jobs.
@@ -81,8 +82,13 @@ console.log(`Cancelled ${cancelledCount} waiting requests`);
 | `controller.activeCount` | `number` (read-only) | Number of requests currently executing in-flight. |
 | `controller.pendingCount` | `number` (read-only) | Number of requests currently parked in the queue waiting for a free slot. |
 | `controller.maxRequests` | `number` (read-only) | Current maximum concurrency limit. |
+| `controller.targetConcurrency` | `number` (read-only) | Target maximum concurrency limit configured at initialization or via manual override. |
+| `controller.isPaused` | `boolean` (read-only) | Whether queue dispatch is currently paused in a cooldown window. |
 | `controller.setMaxConcurrency(newLimit)` | `(limit: number) => void` | Updates concurrency at runtime. If increased, waiting tasks are immediately dispatched into newly freed slots. |
 | `controller.clearQueue(reason?)` | `(reason?: unknown) => number` | Rejects and cancels all requests currently waiting in the queue. In-flight requests are unaffected. Returns count of cleared tasks. |
+| `controller.pause(durationMs)` | `(durationMs: number) => void` | Temporarily suspends queue dispatch for `durationMs`. In-flight requests finish normally. |
+| `controller.resume()` | `() => void` | Immediately resumes queue dispatch if paused. |
+| `controller.resetAdaptiveBackoff()` | `() => void` | Restores concurrency to `targetConcurrency` and clears any active pause cooldown. |
 
 ---
 
@@ -159,6 +165,39 @@ abortController.abort();
 
 ---
 
+## Adaptive HTTP 429 Backoff & Rate Limiting
+
+When calling rate-limited upstream services (e.g. OpenAI, Stripe, GitHub, internal microservices), continuing to send requests at peak concurrency after receiving an HTTP `429 Too Many Requests` causes cascading failures and extended bans.
+
+Enabling `adaptiveBackoff` activates **Additive Increase / Multiplicative Decrease (AIMD)** with automatic `Retry-After` header parsing:
+
+```typescript
+const controller = axiosParallelLimit(http, {
+  maxRequests: 10,
+  adaptiveBackoff: {
+    minConcurrency: 1,       // Never drop below 1 concurrent request
+    decreaseFactor: 0.5,      // Halve concurrency upon receiving a 429
+    fallbackCooldownMs: 1500, // Cooldown if Retry-After header is omitted
+    maxCooldownMs: 30000,     // Cap maximum cooldown at 30 seconds
+    successStep: 5,           // Ramp concurrency +1 after 5 consecutive successes
+    onThrottle: ({ retryAfterMs, previousConcurrency, newConcurrency }) => {
+      console.warn(`429 received: throttled ${previousConcurrency} -> ${newConcurrency}, pausing ${retryAfterMs}ms`);
+    },
+    onRampUp: ({ concurrency, targetConcurrency }) => {
+      console.log(`Recovered: concurrency increased to ${concurrency}/${targetConcurrency}`);
+    },
+  },
+});
+```
+
+### How Adaptive Backoff Works:
+1. **RFC `Retry-After` Parsing**: Automatically parses both integer seconds (`Retry-After: 10`) and HTTP-date strings (`Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`).
+2. **Queue Suspension Without Drops**: While paused in cooldown, queued requests remain safely parked in the queue without being dropped or rejected.
+3. **Multiplicative Decrease**: Current concurrency limit is halved (or reduced by `decreaseFactor`) down to `minConcurrency`.
+4. **Additive Increase**: After `successStep` consecutive non-429 responses, concurrency steps back up (+1) until reaching the initial target concurrency.
+
+---
+
 ## Configuration Options
 
 `axiosParallelLimit(axiosInstance, options)` accepts the following options:
@@ -168,6 +207,7 @@ abortController.abort();
 | `maxRequests` | `number` | **Yes** | — | Concurrency cap (`>= 1`). Maximum simultaneous in-flight requests. |
 | `maxQueueSize` | `number` | No | `unbounded` | Hard upper bound on queue depth (`>= 0`). Rejects with `QueueFullError` when exceeded. |
 | `queueTimeout` | `number` (ms) | No | `disabled` | Maximum wait duration in queue before rejecting with `QueueTimeoutError` (`>= 0`). |
+| `adaptiveBackoff` | `boolean \| AdaptiveBackoffOptions` | No | `false` | Enable automatic 429 rate limiting, `Retry-After` backoff, and AIMD recovery. Pass `true` for defaults or a custom config. |
 | `onActiveCountChange` | `(count: number) => void` | No | — | Triggered whenever in-flight active count changes. |
 | `onPendingCountChange` | `(count: number) => void` | No | — | Triggered whenever queue pending count changes. |
 | `onDispatch` | `(info: QueueEventInfo) => void` | No | — | Called when a request acquires a slot and begins execution (`waitMs` indicates queue wait). |

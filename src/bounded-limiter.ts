@@ -97,6 +97,8 @@ export class BoundedLimiter<T> {
     private readonly queue: QueueItem<T>[] = [];
     private active = 0;
     private _maxConcurrency: number;
+    private pausedUntil = 0;
+    private pauseTimer?: ReturnType<typeof setTimeout>;
 
     constructor(private readonly options: BoundedLimiterOptions<T>) {
         if (!Number.isFinite(options.maxConcurrency) || options.maxConcurrency < 1) {
@@ -132,6 +134,56 @@ export class BoundedLimiter<T> {
         return this._maxConcurrency;
     }
 
+    /** Whether queue dispatch is temporarily paused in a backoff cooldown. */
+    get isPaused(): boolean {
+        return this.pausedUntil > now();
+    }
+
+    /** Timestamp (epoch ms) until which queue dispatch is paused. */
+    get pausedUntilTimestamp(): number {
+        return this.pausedUntil;
+    }
+
+    /**
+     * Pause dispatching tasks from the queue for `durationMs` milliseconds.
+     * In-flight tasks continue running, but queued tasks wait until the cooldown expires.
+     */
+    pause(durationMs: number): void {
+        if (!Number.isFinite(durationMs) || durationMs <= 0) {
+            return;
+        }
+        const until = now() + durationMs;
+        this.pausedUntil = until;
+        if (this.pauseTimer) {
+            clearTimeout(this.pauseTimer);
+        }
+        this.pauseTimer = setTimeout(() => {
+            this.pausedUntil = 0;
+            this.pauseTimer = undefined;
+            while (!this.isPaused && this.active < this._maxConcurrency && this.queue.length > 0) {
+                this.pullNext();
+            }
+        }, durationMs);
+
+        if (typeof this.pauseTimer === 'object' && this.pauseTimer !== null && 'unref' in this.pauseTimer && typeof this.pauseTimer.unref === 'function') {
+            this.pauseTimer.unref();
+        }
+    }
+
+    /**
+     * Resume queue dispatch immediately if paused.
+     */
+    resume(): void {
+        if (this.pauseTimer) {
+            clearTimeout(this.pauseTimer);
+            this.pauseTimer = undefined;
+        }
+        this.pausedUntil = 0;
+        while (!this.isPaused && this.active < this._maxConcurrency && this.queue.length > 0) {
+            this.pullNext();
+        }
+    }
+
     /**
      * Dynamically update the concurrency limit at runtime.
      * If increased, queued tasks are immediately dispatched into available slots.
@@ -143,7 +195,7 @@ export class BoundedLimiter<T> {
             );
         }
         this._maxConcurrency = limit;
-        while (this.active < this._maxConcurrency && this.queue.length > 0) {
+        while (!this.isPaused && this.active < this._maxConcurrency && this.queue.length > 0) {
             this.pullNext();
         }
     }
@@ -174,8 +226,8 @@ export class BoundedLimiter<T> {
      * cancellation while queued.
      */
     acquire(context: T, opts: AcquireOptions = {}): Promise<ReleaseFn> {
-        // 1) Slot free → admit immediately (never subject to queueTimeout).
-        if (this.active < this._maxConcurrency) {
+        // 1) Slot free AND not paused → admit immediately (never subject to queueTimeout).
+        if (!this.isPaused && this.active < this._maxConcurrency) {
             this.active++;
             this.notifyActive();
             this.emit(this.options.onDispatch, context, 0);
@@ -294,7 +346,7 @@ export class BoundedLimiter<T> {
 
     /** Promote the next queued task into a freed slot, if any. */
     private pullNext = (): void => {
-        if (this.active >= this._maxConcurrency) return;
+        if (this.isPaused || this.active >= this._maxConcurrency) return;
         const item = this.queue.shift();
         if (!item) return;
 
