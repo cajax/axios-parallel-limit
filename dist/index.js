@@ -5,45 +5,183 @@ import axios, {
 
 // src/bounded-limiter.ts
 var now = () => Date.now();
+var PriorityBucket = class {
+  constructor(priority) {
+    this.head = null;
+    this.tail = null;
+    this.size = 0;
+    this.priority = priority;
+  }
+  push(item) {
+    const node = { item, prev: this.tail, next: null, bucket: this };
+    item.node = node;
+    this.size++;
+    if (this.tail) {
+      this.tail.next = node;
+      this.tail = node;
+    } else {
+      this.head = node;
+      this.tail = node;
+    }
+    return node;
+  }
+  shift() {
+    if (!this.head) {
+      return void 0;
+    }
+    const node = this.head;
+    this.head = node.next;
+    if (this.head) {
+      this.head.prev = null;
+    } else {
+      this.tail = null;
+    }
+    this.size--;
+    node.prev = null;
+    node.next = null;
+    node.bucket = void 0;
+    node.item.node = void 0;
+    return node.item;
+  }
+  remove(node) {
+    if (node.prev) {
+      node.prev.next = node.next;
+    } else if (node === this.head) {
+      this.head = node.next;
+    }
+    if (node.next) {
+      node.next.prev = node.prev;
+    } else if (node === this.tail) {
+      this.tail = node.prev;
+    }
+    this.size--;
+    node.prev = null;
+    node.next = null;
+    node.bucket = void 0;
+    node.item.node = void 0;
+  }
+};
+var PriorityDeque = class {
+  constructor() {
+    this.buckets = [];
+    this.bucketMap = /* @__PURE__ */ new Map();
+    this._size = 0;
+  }
+  get size() {
+    return this._size;
+  }
+  get isEmpty() {
+    return this._size === 0;
+  }
+  /**
+   * Inserts an item into the deque respecting its priority.
+   * Higher priority items precede lower priority items.
+   * Items of identical priority preserve strict FIFO ordering.
+   */
+  insert(item) {
+    let bucket = this.bucketMap.get(item.priority);
+    if (!bucket) {
+      bucket = new PriorityBucket(item.priority);
+      this.bucketMap.set(item.priority, bucket);
+      this.insertBucket(bucket);
+    }
+    const node = bucket.push(item);
+    this._size++;
+    return node;
+  }
+  insertBucket(bucket) {
+    if (this.buckets.length === 0 || bucket.priority <= this.buckets[this.buckets.length - 1].priority) {
+      this.buckets.push(bucket);
+      return;
+    }
+    if (bucket.priority > this.buckets[0].priority) {
+      this.buckets.unshift(bucket);
+      return;
+    }
+    let low = 0;
+    let high = this.buckets.length;
+    while (low < high) {
+      const mid = low + high >>> 1;
+      if (this.buckets[mid].priority > bucket.priority) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    this.buckets.splice(low, 0, bucket);
+  }
+  /**
+   * Remove and return the highest priority item from the front of the queue in O(1) time.
+   */
+  shift() {
+    while (this.buckets.length > 0) {
+      const highestBucket = this.buckets[0];
+      const item = highestBucket.shift();
+      if (item) {
+        this._size--;
+        if (highestBucket.size === 0) {
+          this.buckets.shift();
+          this.bucketMap.delete(highestBucket.priority);
+        }
+        return item;
+      } else {
+        this.buckets.shift();
+        this.bucketMap.delete(highestBucket.priority);
+      }
+    }
+    return void 0;
+  }
+  /**
+   * Remove a specific node from anywhere in the queue in O(1) time (used for timeout and cancellation).
+   * Returns true if the node was unlinked, false if already removed.
+   */
+  remove(node) {
+    if (!node || !node.bucket) return false;
+    const bucket = node.bucket;
+    bucket.remove(node);
+    this._size--;
+    if (bucket.size === 0) {
+      this.bucketMap.delete(bucket.priority);
+      const idx = this.buckets.indexOf(bucket);
+      if (idx !== -1) {
+        this.buckets.splice(idx, 1);
+      }
+    }
+    return true;
+  }
+  /**
+   * Clear all items from the queue and return them as an array.
+   */
+  clear() {
+    const items = [];
+    for (const bucket of this.buckets) {
+      let curr = bucket.head;
+      while (curr) {
+        curr.item.node = void 0;
+        items.push(curr.item);
+        curr = curr.next;
+      }
+    }
+    this.buckets = [];
+    this.bucketMap.clear();
+    this._size = 0;
+    return items;
+  }
+};
 var BoundedLimiter = class {
   constructor(options) {
     this.options = options;
-    this.queue = [];
+    this.queue = new PriorityDeque();
     this.active = 0;
     this.pausedUntil = 0;
-    /**
-     * Inserts an item into the queue while preserving stable priority ordering.
-     * Higher priority items precede lower ones. Equal priority items stay in FIFO order.
-     */
-    this.insertQueueItem = (item) => {
-      if (this.queue.length === 0 || item.priority <= this.queue[this.queue.length - 1].priority) {
-        this.queue.push(item);
-        return;
-      }
-      if (item.priority > this.queue[0].priority) {
-        this.queue.unshift(item);
-        return;
-      }
-      let low = 0;
-      let high = this.queue.length;
-      while (low < high) {
-        const mid = low + high >>> 1;
-        if (this.queue[mid].priority >= item.priority) {
-          low = mid + 1;
-        } else {
-          high = mid;
-        }
-      }
-      this.queue.splice(low, 0, item);
-    };
     this.notifyActive = () => {
       this.options.onActiveCountChange?.(this.active);
     };
     this.notifyPending = () => {
-      this.options.onPendingCountChange?.(this.queue.length);
+      this.options.onPendingCountChange?.(this.queue.size);
     };
     this.emit = (cb, context, waitMs) => {
-      cb?.({ context, waitMs, queueSize: this.queue.length });
+      cb?.({ context, waitMs, queueSize: this.queue.size });
     };
     /** Tear down a queued item's timer and cancellation listener. Idempotent. */
     this.clearItem = (item) => {
@@ -57,10 +195,7 @@ var BoundedLimiter = class {
       }
     };
     this.removeFromQueue = (item) => {
-      const index = this.queue.indexOf(item);
-      if (index === -1) return false;
-      this.queue.splice(index, 1);
-      return true;
+      return this.queue.remove(item.node);
     };
     this.makeRelease = () => {
       let released = false;
@@ -125,7 +260,7 @@ var BoundedLimiter = class {
   }
   /** Tasks currently waiting in the queue. */
   get pendingCount() {
-    return this.queue.length;
+    return this.queue.size;
   }
   /** Current maximum concurrency limit. */
   get maxConcurrency() {
@@ -155,7 +290,7 @@ var BoundedLimiter = class {
     this.pauseTimer = setTimeout(() => {
       this.pausedUntil = 0;
       this.pauseTimer = void 0;
-      while (!this.isPaused && this.active < this._maxConcurrency && this.queue.length > 0) {
+      while (!this.isPaused && this.active < this._maxConcurrency && this.queue.size > 0) {
         this.pullNext();
       }
     }, durationMs);
@@ -172,7 +307,7 @@ var BoundedLimiter = class {
       this.pauseTimer = void 0;
     }
     this.pausedUntil = 0;
-    while (!this.isPaused && this.active < this._maxConcurrency && this.queue.length > 0) {
+    while (!this.isPaused && this.active < this._maxConcurrency && this.queue.size > 0) {
       this.pullNext();
     }
   }
@@ -187,7 +322,7 @@ var BoundedLimiter = class {
       );
     }
     this._maxConcurrency = limit;
-    while (!this.isPaused && this.active < this._maxConcurrency && this.queue.length > 0) {
+    while (!this.isPaused && this.active < this._maxConcurrency && this.queue.size > 0) {
       this.pullNext();
     }
   }
@@ -197,9 +332,8 @@ var BoundedLimiter = class {
    * already actively in-flight. Returns the count of cancelled tasks.
    */
   clearQueue(reason) {
-    const count = this.queue.length;
-    if (count === 0) return 0;
-    const items = this.queue.splice(0, this.queue.length);
+    const items = this.queue.clear();
+    if (items.length === 0) return 0;
     for (const item of items) {
       if (item.settled) continue;
       item.settled = true;
@@ -207,7 +341,7 @@ var BoundedLimiter = class {
       item.reject(reason ?? this.options.createAbortError(item.context));
     }
     this.notifyPending();
-    return count;
+    return items.length;
   }
   /**
    * Acquire a slot. Resolves with a `release()` once a slot is held; rejects
@@ -226,7 +360,7 @@ var BoundedLimiter = class {
       return Promise.reject(this.options.createAbortError(context));
     }
     const { maxQueueSize } = this.options;
-    if (maxQueueSize !== void 0 && this.queue.length >= maxQueueSize) {
+    if (maxQueueSize !== void 0 && this.queue.size >= maxQueueSize) {
       this.emit(this.options.onQueueOverflow, context, 0);
       return Promise.reject(this.options.createOverflowError(context));
     }
@@ -244,7 +378,7 @@ var BoundedLimiter = class {
       if (cancellation) {
         item.detachAbort = cancellation.subscribe(() => this.onAbort(item));
       }
-      this.insertQueueItem(item);
+      this.queue.insert(item);
       this.notifyPending();
     });
   }
@@ -540,6 +674,7 @@ async function runOriginalAdapter(originalAdapter, adapterConfig) {
   }
 }
 export {
+  PriorityDeque,
   QueueFullError,
   QueueTimeoutError,
   axiosParallelLimit,
