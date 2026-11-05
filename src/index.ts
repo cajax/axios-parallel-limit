@@ -126,6 +126,56 @@ export interface QueueEventInfo {
     queueSize: number;
 }
 
+/**
+ * Configuration options for automated adaptive rate-limiting and Retry-After backoff
+ * when encountering HTTP 429 (Too Many Requests).
+ */
+export interface AdaptiveBackoffOptions {
+    /**
+     * Minimum concurrency floor when throttling down under 429 responses.
+     * Default: 1.
+     */
+    minConcurrency?: number;
+    /**
+     * Fallback cooldown duration (in milliseconds) if the server omits the `Retry-After` header.
+     * Default: 1000ms.
+     */
+    fallbackCooldownMs?: number;
+    /**
+     * Maximum allowed backoff duration (in milliseconds), capping excessively long `Retry-After` values.
+     * Default: 60000ms (60 seconds).
+     */
+    maxCooldownMs?: number;
+    /**
+     * Number of consecutive successful (non-429) requests needed to step concurrency back up by 1.
+     * Default: 5.
+     */
+    successStep?: number;
+    /**
+     * Multiplicative decrease factor (0 < factor < 1) applied to current concurrency on HTTP 429.
+     * E.g. 0.5 halves the concurrency limit.
+     * Default: 0.5.
+     */
+    decreaseFactor?: number;
+    /**
+     * Callback invoked whenever a 429 response triggers backoff throttling.
+     */
+    onThrottle?: (info: {
+        status: number;
+        retryAfterMs: number;
+        previousConcurrency: number;
+        newConcurrency: number;
+        pausedUntil: number;
+    }) => void;
+    /**
+     * Callback invoked whenever consecutive successes ramp concurrency back up.
+     */
+    onRampUp?: (info: {
+        concurrency: number;
+        targetConcurrency: number;
+    }) => void;
+}
+
 export interface AxiosParallelLimitOptions {
     /**
      * The maximum number of parallel (in-flight) requests.
@@ -159,6 +209,15 @@ export interface AxiosParallelLimitOptions {
      * Default: unbounded — no limit on queue depth.
      */
     maxQueueSize?: number;
+    /**
+     * Automatically throttle concurrency down on HTTP 429 (Too Many Requests),
+     * pause queue execution respecting `Retry-After` headers, and gradually ramp
+     * back up upon consecutive successful requests. Pass `true` for defaults or
+     * an {@link AdaptiveBackoffOptions} configuration object.
+     *
+     * Default: disabled (`false`).
+     */
+    adaptiveBackoff?: boolean | AdaptiveBackoffOptions;
     /**
      * Called when a request begins executing (acquires a slot), exposing how long
      * it waited in the queue. `waitMs` is `0` for a request admitted immediately
@@ -270,6 +329,10 @@ export interface AxiosParallelLimitController {
     readonly pendingCount: number;
     /** Current maximum concurrency limit. */
     readonly maxRequests: number;
+    /** Target maximum concurrency limit configured at initialization or via manual override. */
+    readonly targetConcurrency: number;
+    /** Whether the queue dispatch is currently paused in a backoff cooldown. */
+    readonly isPaused: boolean;
     /**
      * Dynamically update the concurrency limit at runtime.
      * If increased, waiting requests are immediately dispatched into the newly available slots.
@@ -282,6 +345,52 @@ export interface AxiosParallelLimitController {
      * Returns the number of requests that were cleared.
      */
     clearQueue(reason?: unknown): number;
+    /**
+     * Temporarily pause queue dispatch for `durationMs` milliseconds.
+     */
+    pause(durationMs: number): void;
+    /**
+     * Resume queue dispatch immediately if paused.
+     */
+    resume(): void;
+    /**
+     * Reset adaptive backoff state, restoring target concurrency and clearing any active pause.
+     */
+    resetAdaptiveBackoff(): void;
+}
+
+function isHttp429(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const err = error as { response?: { status?: number }; status?: number };
+    return err.response?.status === 429 || err.status === 429;
+}
+
+function getHeader(headers: unknown, name: string): unknown {
+    if (!headers || typeof headers !== 'object') return undefined;
+    const h = headers as Record<string, unknown> & { get?: (k: string) => unknown };
+    if (typeof h.get === 'function') {
+        return h.get(name) ?? h.get(name.toLowerCase());
+    }
+    return h[name] ?? h[name.toLowerCase()] ?? h[name.toUpperCase()];
+}
+
+export function parseRetryAfter(header: unknown, fallbackMs: number, maxMs: number): number {
+    if (typeof header === 'number' && Number.isFinite(header)) {
+        return Math.min(Math.max(0, header * 1000), maxMs);
+    }
+    if (typeof header === 'string') {
+        const trimmed = header.trim();
+        if (/^\d+$/.test(trimmed)) {
+            const secs = parseInt(trimmed, 10);
+            return Math.min(Math.max(0, secs * 1000), maxMs);
+        }
+        const parsedDate = Date.parse(trimmed);
+        if (!Number.isNaN(parsedDate)) {
+            const diff = parsedDate - Date.now();
+            return Math.min(Math.max(0, diff), maxMs);
+        }
+    }
+    return Math.min(Math.max(0, fallbackMs), maxMs);
 }
 
 export function axiosParallelLimit(
@@ -321,6 +430,88 @@ export function axiosParallelLimit(
         createOverflowError: (config) => new QueueFullError(config),
         createAbortError: (config) => cancelError(config),
     });
+
+    let targetConcurrency = options.maxRequests;
+    let consecutiveSuccesses = 0;
+    let lastThrottleTime = 0;
+
+    const backoffConfig: AdaptiveBackoffOptions | null = options.adaptiveBackoff
+        ? (typeof options.adaptiveBackoff === 'object' ? options.adaptiveBackoff : {})
+        : null;
+
+    if (backoffConfig) {
+        const minConcurrency = backoffConfig.minConcurrency ?? 1;
+        const fallbackCooldownMs = backoffConfig.fallbackCooldownMs ?? 1000;
+        const maxCooldownMs = backoffConfig.maxCooldownMs ?? 60000;
+        const successStep = backoffConfig.successStep ?? 5;
+        const decreaseFactor = backoffConfig.decreaseFactor ?? 0.5;
+
+        const handle429 = (error: unknown): void => {
+            const nowTime = Date.now();
+            const rawHeader = error && typeof error === 'object' && (error as any).response
+                ? getHeader((error as any).response.headers, 'retry-after')
+                : undefined;
+            const cooldownMs = parseRetryAfter(rawHeader, fallbackCooldownMs, maxCooldownMs);
+
+            consecutiveSuccesses = 0;
+            limiter.pause(cooldownMs);
+
+            const prevConcurrency = limiter.maxConcurrency;
+            let newConcurrency = prevConcurrency;
+            if (nowTime - lastThrottleTime > 200) {
+                newConcurrency = Math.max(minConcurrency, Math.floor(prevConcurrency * decreaseFactor));
+                if (newConcurrency !== prevConcurrency) {
+                    limiter.setMaxConcurrency(newConcurrency);
+                }
+                lastThrottleTime = nowTime;
+            }
+
+            backoffConfig.onThrottle?.({
+                status: 429,
+                retryAfterMs: cooldownMs,
+                previousConcurrency: prevConcurrency,
+                newConcurrency,
+                pausedUntil: Date.now() + cooldownMs,
+            });
+        };
+
+        const handleSuccess = (): void => {
+            if (limiter.maxConcurrency < targetConcurrency) {
+                consecutiveSuccesses++;
+                if (consecutiveSuccesses >= successStep) {
+                    consecutiveSuccesses = 0;
+                    const newConcurrency = Math.min(targetConcurrency, limiter.maxConcurrency + 1);
+                    limiter.setMaxConcurrency(newConcurrency);
+                    backoffConfig.onRampUp?.({
+                        concurrency: newConcurrency,
+                        targetConcurrency,
+                    });
+                }
+            }
+        };
+
+        axiosInstance.interceptors.response.use(
+            (response) => {
+                handleSuccess();
+                return response;
+            },
+            (error) => {
+                if (isHttp429(error)) {
+                    handle429(error);
+                } else if (
+                    error &&
+                    typeof error === 'object' &&
+                    (error as any).response &&
+                    typeof (error as any).response.status === 'number' &&
+                    (error as any).response.status < 500
+                ) {
+                    // Non-5xx client errors (400, 401, 404, etc.) indicate downstream server is healthy
+                    handleSuccess();
+                }
+                return Promise.reject(error);
+            },
+        );
+    }
 
     axiosInstance.interceptors.request.use((config: InternalAxiosRequestConfig) => {
         const originalAdapter = config.adapter ?? axiosInstance.defaults.adapter;
@@ -369,11 +560,29 @@ export function axiosParallelLimit(
         get maxRequests() {
             return limiter.maxConcurrency;
         },
+        get targetConcurrency() {
+            return targetConcurrency;
+        },
+        get isPaused() {
+            return limiter.isPaused;
+        },
         setMaxConcurrency(limit: number) {
+            targetConcurrency = limit;
             limiter.setMaxConcurrency(limit);
         },
         clearQueue(reason?: unknown) {
             return limiter.clearQueue(reason);
+        },
+        pause(durationMs: number) {
+            limiter.pause(durationMs);
+        },
+        resume() {
+            limiter.resume();
+        },
+        resetAdaptiveBackoff() {
+            limiter.resume();
+            consecutiveSuccesses = 0;
+            limiter.setMaxConcurrency(targetConcurrency);
         },
     };
 }
