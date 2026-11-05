@@ -5,7 +5,16 @@ import axios, {
     AxiosAdapter,
     CanceledError,
 } from 'axios';
-import { BoundedLimiter, BoundedLimiterEventInfo, Cancellation } from './bounded-limiter.js';
+import {
+    BoundedLimiter,
+    BoundedLimiterEventInfo,
+    Cancellation,
+    PriorityDeque,
+    QueueNode,
+} from './bounded-limiter.js';
+
+export { PriorityDeque };
+export type { QueueNode };
 
 const QUEUE_TIMEOUT_CODE = 'ERR_QUEUE_TIMEOUT';
 const QUEUE_FULL_CODE = 'ERR_QUEUE_FULL';
