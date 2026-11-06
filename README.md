@@ -298,6 +298,7 @@ To maintain rock-solid stability and prevent regressions:
 - **100% Test Coverage**: Every feature, option, edge case, and error path must be covered by automated tests (`npm test`).
 - **Documented Before Merge**: Any newly added configuration option, method, error code, or behavioral change **must be documented in this `README.md`** with working TypeScript code samples.
 - **Strict Linting & Formatting**: Zero compiler warnings or code style issues (`npm run lint`, `npm run format:check`). Automated corrections are available via `npm run lint:fix` and `npm run format`.
+- **Standardized PR & Issue Templates**: Pull requests must satisfy the checklist in `.github/pull_request_template.md` (tests, linting, formatting, docs) prior to merge.
 
 ---
 
