@@ -7,11 +7,12 @@ import axios, {
 } from 'axios';
 import {
     BoundedLimiter,
-    BoundedLimiterEventInfo,
-    Cancellation,
+    type BoundedLimiterEventInfo,
+    type Cancellation,
     PriorityDeque,
-    QueueNode,
-} from './bounded-limiter.js';
+    type QueueNode,
+    parseRetryAfter as bulkheadParseRetryAfter,
+} from '@cajax/bulkhead-limit';
 
 export { PriorityDeque };
 export type { QueueNode };
@@ -384,22 +385,9 @@ function getHeader(headers: unknown, name: string): unknown {
 }
 
 export function parseRetryAfter(header: unknown, fallbackMs: number, maxMs: number): number {
-    if (typeof header === 'number' && Number.isFinite(header)) {
-        return Math.min(Math.max(0, header * 1000), maxMs);
-    }
-    if (typeof header === 'string') {
-        const trimmed = header.trim();
-        if (/^\d+$/.test(trimmed)) {
-            const secs = parseInt(trimmed, 10);
-            return Math.min(Math.max(0, secs * 1000), maxMs);
-        }
-        const parsedDate = Date.parse(trimmed);
-        if (!Number.isNaN(parsedDate)) {
-            const diff = parsedDate - Date.now();
-            return Math.min(Math.max(0, diff), maxMs);
-        }
-    }
-    return Math.min(Math.max(0, fallbackMs), maxMs);
+    const delay = bulkheadParseRetryAfter(header);
+    const resolved = delay !== undefined ? delay : fallbackMs;
+    return Math.min(Math.max(0, resolved), maxMs);
 }
 
 export function axiosParallelLimit(

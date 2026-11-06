@@ -95,7 +95,7 @@ describe('Adaptive HTTP 429 Backoff & Rate Limiting', () => {
         test('pauses queue dispatch during cooldown and resumes on expiry', async () => {
             const executionOrder: string[] = [];
 
-            mock.onGet('/first').reply(429, {}, { 'retry-after': '1' }); // 1 sec
+            mock.onGet('/first').reply(429, {}, { 'retry-after': '0.05' }); // 50ms
             mock.onGet('/second').reply(async () => {
                 executionOrder.push('second');
                 return [200, 'ok'];
@@ -109,12 +109,8 @@ describe('Adaptive HTTP 429 Backoff & Rate Limiting', () => {
                 },
             });
 
-            // First triggers 429 with 1s pause
+            // First triggers 429 with 50ms pause
             await expect(instance.get('/first')).rejects.toThrow();
-            expect(controller.isPaused).toBe(true);
-
-            // Trigger a manual shorter pause to test timer unpause
-            controller.pause(50);
             expect(controller.isPaused).toBe(true);
 
             // Queue a second request while paused

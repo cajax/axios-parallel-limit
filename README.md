@@ -16,6 +16,7 @@ It lets you control the concurrency of your HTTP requests so your application ne
 - **Per-Request Priority Queueing**: Prioritize high-urgency requests (`priority: number`) to leapfrog lower-priority background jobs.
 - **Zero-Leak Cancellation**: Seamlessly propagates `AbortSignal` and Axios `CancelToken` while waiting in queue.
 - **Interactive Simulator**: Includes a built-in visual dashboard (`npm run dev`) to test concurrency, burst traffic, and live resizing.
+- **Powered by `@cajax/bulkhead-limit`**: Built on top of the decoupled, zero-dependency [`@cajax/bulkhead-limit`](https://github.com/cajax/bulkhead-limit) concurrency engine.
 - **TypeScript-Native**: Full type safety, module augmentation for `AxiosRequestConfig`, and typed error guards.
 
 ---

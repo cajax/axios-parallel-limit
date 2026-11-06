@@ -1,7 +1,7 @@
 import axios from 'axios';
 import MockAdapter from 'axios-mock-adapter';
 import { jest, describe, test, expect, beforeEach, afterEach } from '@jest/globals';
-import { axiosParallelLimit } from '../src/index.js';
+import { axiosParallelLimit, PriorityDeque } from '../src/index.js';
 
 describe('axiosParallelLimit', () => {
     let mock: MockAdapter;
@@ -234,5 +234,23 @@ describe('axiosParallelLimit', () => {
 
         expect(controller.activeCount).toBe(0);
         expect(active).toBe(0);
+    });
+
+    test('exports PriorityDeque backed by @cajax/bulkhead-limit', () => {
+        const deque = new PriorityDeque<string>();
+        expect(deque.size).toBe(0);
+        expect(deque.isEmpty).toBe(true);
+        const node = deque.insert({
+            context: 'test',
+            priority: 10,
+            enqueuedAt: Date.now(),
+            settled: false,
+            resolve: () => {},
+            reject: () => {},
+        });
+        expect(deque.size).toBe(1);
+        expect(deque.isEmpty).toBe(false);
+        expect(deque.remove(node)).toBe(true);
+        expect(deque.size).toBe(0);
     });
 });
