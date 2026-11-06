@@ -47,15 +47,16 @@ function createHarness(opts: HarnessOptions): Harness {
     const instance = axios.create();
     const controllers: Controller[] = [];
 
-    const transport = jest.fn((config: any) =>
-        new Promise((resolve, reject) => {
-            controllers.push({
-                config,
-                resolve: (data: any = { ok: true }) =>
-                    resolve({ data, status: 200, statusText: 'OK', headers: {}, config }),
-                reject,
-            });
-        }),
+    const transport = jest.fn(
+        (config: any) =>
+            new Promise((resolve, reject) => {
+                controllers.push({
+                    config,
+                    resolve: (data: any = { ok: true }) =>
+                        resolve({ data, status: 200, statusText: 'OK', headers: {}, config }),
+                    reject,
+                });
+            }),
     );
 
     instance.defaults.adapter = transport as any;
@@ -93,7 +94,9 @@ function createHarness(opts: HarnessOptions): Harness {
 
 /** Like Promise.allSettled for a single promise; attaches a handler immediately
  *  so an expected rejection never surfaces as an unhandled rejection. */
-const outcome = (p: Promise<unknown>): Promise<{ status: 'fulfilled' | 'rejected'; value?: unknown; reason?: any }> =>
+const outcome = (
+    p: Promise<unknown>,
+): Promise<{ status: 'fulfilled' | 'rejected'; value?: unknown; reason?: any }> =>
     p.then(
         (value) => ({ status: 'fulfilled' as const, value }),
         (reason) => ({ status: 'rejected' as const, reason }),
@@ -328,7 +331,10 @@ describe('invariants under load', () => {
         for (let i = 0; i < 10; i++) {
             results.push(outcome(h.instance.get('/r' + i)));
         }
-        await flushUntil(() => h.transport.mock.calls.length === 2 && h.state.pending === 8, 'saturated');
+        await flushUntil(
+            () => h.transport.mock.calls.length === 2 && h.state.pending === 8,
+            'saturated',
+        );
 
         expect(Math.max(...h.events.active)).toBe(2);
 
@@ -376,7 +382,10 @@ describe('invariants under load', () => {
 
         // Free A → B dispatched from the queue (success-from-queue path).
         h.resolve(0);
-        await flushUntil(() => h.transport.mock.calls.length === 2 && h.state.pending === 2, 'B dispatched');
+        await flushUntil(
+            () => h.transport.mock.calls.length === 2 && h.state.pending === 2,
+            'B dispatched',
+        );
 
         // Cancel E while it waits (middle of the queue).
         controllerE.abort();
@@ -472,7 +481,10 @@ describe('invariants under load', () => {
 
         // Free the slot → the first queued item ('/queued') is dispatched, its timer cleared.
         h.resolve(0);
-        await flushUntil(() => h.transport.mock.calls.length === 2 && h.state.pending === 1, 'queued dispatched');
+        await flushUntil(
+            () => h.transport.mock.calls.length === 2 && h.state.pending === 1,
+            'queued dispatched',
+        );
 
         // The remaining queued item ('/timeout') exceeds its deadline.
         await jest.advanceTimersByTimeAsync(300);
@@ -482,7 +494,11 @@ describe('invariants under load', () => {
         h.resolve(1);
         await flushUntil(() => h.state.active === 0, 'all settled');
 
-        const [rImmediate, rQueued, rTimedOut] = await Promise.all([pImmediate, pQueued, pTimedOut]);
+        const [rImmediate, rQueued, rTimedOut] = await Promise.all([
+            pImmediate,
+            pQueued,
+            pTimedOut,
+        ]);
         expect(rImmediate.status).toBe('fulfilled');
         expect(rQueued.status).toBe('fulfilled');
         expect(rTimedOut.status).toBe('rejected');
@@ -581,7 +597,11 @@ describe('observability callbacks', () => {
 
     test('onQueueOverflow fires with the offending config and the queue size at rejection', async () => {
         const overflows: any[] = [];
-        const h = createHarness({ maxRequests: 1, maxQueueSize: 1, onQueueOverflow: (i) => overflows.push(i) });
+        const h = createHarness({
+            maxRequests: 1,
+            maxQueueSize: 1,
+            onQueueOverflow: (i) => overflows.push(i),
+        });
 
         const pA = outcome(h.instance.get('/a'));
         await flushUntil(() => h.state.active === 1, 'A running');
@@ -604,7 +624,11 @@ describe('observability callbacks', () => {
     test('onQueueTimeout fires with the offending config and the time waited', async () => {
         jest.useFakeTimers();
         const timeouts: any[] = [];
-        const h = createHarness({ maxRequests: 1, queueTimeout: 750, onQueueTimeout: (i) => timeouts.push(i) });
+        const h = createHarness({
+            maxRequests: 1,
+            queueTimeout: 750,
+            onQueueTimeout: (i) => timeouts.push(i),
+        });
 
         const pA = outcome(h.instance.get('/a'));
         await flushUntil(() => h.state.active === 1, 'A running');

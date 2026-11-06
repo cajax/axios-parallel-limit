@@ -130,7 +130,7 @@ describe('PriorityDeque', () => {
         deque.insert(createItem('c'));
 
         const cleared = deque.clear();
-        expect(cleared.map(i => i.context)).toEqual(['a', 'b', 'c']);
+        expect(cleared.map((i) => i.context)).toEqual(['a', 'b', 'c']);
         expect(deque.size).toBe(0);
         expect(deque.isEmpty).toBe(true);
     });

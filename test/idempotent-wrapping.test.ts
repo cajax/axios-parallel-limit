@@ -61,15 +61,16 @@ function createHarness(opts: Parameters<typeof axiosParallelLimit>[1]): Harness 
     const instance = axios.create();
     const controllers: Controller[] = [];
 
-    const transport = jest.fn((config: any) =>
-        new Promise((resolve, reject) => {
-            controllers.push({
-                config,
-                settle: (status = 200, data: any = { ok: true }) =>
-                    resolve({ data, status, statusText: '', headers: {}, config }),
-                fail: reject,
-            });
-        }),
+    const transport = jest.fn(
+        (config: any) =>
+            new Promise((resolve, reject) => {
+                controllers.push({
+                    config,
+                    settle: (status = 200, data: any = { ok: true }) =>
+                        resolve({ data, status, statusText: '', headers: {}, config }),
+                    fail: reject,
+                });
+            }),
     );
     instance.defaults.adapter = transport as any;
 
@@ -243,13 +244,19 @@ describe('idempotent wrapping — end to end', () => {
             // built-in adapters). error.config carries our already-wrapped adapter.
             const fail401 = (c: Controller): void =>
                 c.fail(
-                    new axios.AxiosError('Request failed with status code 401', 'ERR_BAD_REQUEST', c.config, undefined, {
-                        data: {},
-                        status: 401,
-                        statusText: 'Unauthorized',
-                        headers: {},
-                        config: c.config,
-                    } as any),
+                    new axios.AxiosError(
+                        'Request failed with status code 401',
+                        'ERR_BAD_REQUEST',
+                        c.config,
+                        undefined,
+                        {
+                            data: {},
+                            status: 401,
+                            statusText: 'Unauthorized',
+                            headers: {},
+                            config: c.config,
+                        } as any,
+                    ),
                 );
 
             // Saturate the pool: two requests, both 401 on the first attempt.
@@ -264,7 +271,10 @@ describe('idempotent wrapping — end to end', () => {
             // WITH the fix the two retries reuse the existing wrapper and each reaches
             // the transport (a 3rd and 4th call). WITHOUT it they nest and never do —
             // this wait throws (deadlock) instead of hanging the whole suite.
-            await flushUntil(() => h.controllers.length === 4, 'both retries reached the transport');
+            await flushUntil(
+                () => h.controllers.length === 4,
+                'both retries reached the transport',
+            );
             h.controllers[2].settle(200);
             h.controllers[3].settle(200);
 
@@ -289,15 +299,16 @@ describe('idempotent wrapping — end to end', () => {
     test('a per-request untagged adapter is concurrency-limited like any other', async () => {
         const instance = axios.create();
         const controllers: Controller[] = [];
-        const callerAdapter = jest.fn((config: any) =>
-            new Promise((resolve) => {
-                controllers.push({
-                    config,
-                    settle: (status = 200, data: any = { ok: true }) =>
-                        resolve({ data, status, statusText: '', headers: {}, config }),
-                    fail: () => undefined,
-                });
-            }),
+        const callerAdapter = jest.fn(
+            (config: any) =>
+                new Promise((resolve) => {
+                    controllers.push({
+                        config,
+                        settle: (status = 200, data: any = { ok: true }) =>
+                            resolve({ data, status, statusText: '', headers: {}, config }),
+                        fail: () => undefined,
+                    });
+                }),
         );
 
         let maxActive = 0;
@@ -331,15 +342,16 @@ describe('idempotent wrapping — end to end', () => {
     test('an array-of-functions adapter is wrapped and concurrency-limited', async () => {
         const instance = axios.create();
         const controllers: Controller[] = [];
-        const transport = jest.fn((config: any) =>
-            new Promise((resolve) => {
-                controllers.push({
-                    config,
-                    settle: (status = 200, data: any = { ok: true }) =>
-                        resolve({ data, status, statusText: '', headers: {}, config }),
-                    fail: () => undefined,
-                });
-            }),
+        const transport = jest.fn(
+            (config: any) =>
+                new Promise((resolve) => {
+                    controllers.push({
+                        config,
+                        settle: (status = 200, data: any = { ok: true }) =>
+                            resolve({ data, status, statusText: '', headers: {}, config }),
+                        fail: () => undefined,
+                    });
+                }),
         );
         instance.defaults.adapter = [transport] as any; // array with a single function
 
@@ -372,15 +384,16 @@ describe('idempotent wrapping — end to end', () => {
     test('stacking two limiters nests once per limiter on the first dispatch', async () => {
         const instance = axios.create();
         const controllers: Controller[] = [];
-        const transport = jest.fn((config: any) =>
-            new Promise((resolve) => {
-                controllers.push({
-                    config,
-                    settle: (status = 200, data: any = { ok: true }) =>
-                        resolve({ data, status, statusText: '', headers: {}, config }),
-                    fail: () => undefined,
-                });
-            }),
+        const transport = jest.fn(
+            (config: any) =>
+                new Promise((resolve) => {
+                    controllers.push({
+                        config,
+                        settle: (status = 200, data: any = { ok: true }) =>
+                            resolve({ data, status, statusText: '', headers: {}, config }),
+                        fail: () => undefined,
+                    });
+                }),
         );
         instance.defaults.adapter = transport as any;
 
