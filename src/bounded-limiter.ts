@@ -212,7 +212,10 @@ export class PriorityDeque<T> {
 
     private insertBucket(bucket: PriorityBucket<T>): void {
         // Fast-path: append if priority is smaller than or equal to lowest bucket
-        if (this.buckets.length === 0 || bucket.priority <= this.buckets[this.buckets.length - 1].priority) {
+        if (
+            this.buckets.length === 0 ||
+            bucket.priority <= this.buckets[this.buckets.length - 1].priority
+        ) {
             this.buckets.push(bucket);
             return;
         }
@@ -313,12 +316,18 @@ export class BoundedLimiter<T> {
                 `maxConcurrency must be a positive number >= 1, received: ${options.maxConcurrency}`,
             );
         }
-        if (options.maxQueueSize !== undefined && (!Number.isFinite(options.maxQueueSize) || options.maxQueueSize < 0)) {
+        if (
+            options.maxQueueSize !== undefined &&
+            (!Number.isFinite(options.maxQueueSize) || options.maxQueueSize < 0)
+        ) {
             throw new RangeError(
                 `maxQueueSize must be a non-negative number >= 0, received: ${options.maxQueueSize}`,
             );
         }
-        if (options.queueTimeout !== undefined && (!Number.isFinite(options.queueTimeout) || options.queueTimeout < 0)) {
+        if (
+            options.queueTimeout !== undefined &&
+            (!Number.isFinite(options.queueTimeout) || options.queueTimeout < 0)
+        ) {
             throw new RangeError(
                 `queueTimeout must be a non-negative number >= 0, received: ${options.queueTimeout}`,
             );
@@ -372,7 +381,12 @@ export class BoundedLimiter<T> {
             }
         }, durationMs);
 
-        if (typeof this.pauseTimer === 'object' && this.pauseTimer !== null && 'unref' in this.pauseTimer && typeof this.pauseTimer.unref === 'function') {
+        if (
+            typeof this.pauseTimer === 'object' &&
+            this.pauseTimer !== null &&
+            'unref' in this.pauseTimer &&
+            typeof this.pauseTimer.unref === 'function'
+        ) {
             this.pauseTimer.unref();
         }
     }
@@ -456,13 +470,31 @@ export class BoundedLimiter<T> {
 
         // 4) Defer: park in the queue until a slot frees (or it times out / is cancelled).
         return new Promise<ReleaseFn>((resolve, reject) => {
-            const priority = typeof opts.priority === 'number' && Number.isFinite(opts.priority) ? opts.priority : 0;
-            const item: QueueItem<T> = { context, priority, enqueuedAt: now(), settled: false, resolve, reject };
+            const priority =
+                typeof opts.priority === 'number' && Number.isFinite(opts.priority)
+                    ? opts.priority
+                    : 0;
+            const item: QueueItem<T> = {
+                context,
+                priority,
+                enqueuedAt: now(),
+                settled: false,
+                resolve,
+                reject,
+            };
 
-            const timeout = typeof opts.queueTimeout === 'number' ? opts.queueTimeout : this.options.queueTimeout;
+            const timeout =
+                typeof opts.queueTimeout === 'number'
+                    ? opts.queueTimeout
+                    : this.options.queueTimeout;
             if (timeout !== undefined) {
                 const timer = setTimeout(() => this.onTimeout(item), timeout);
-                if (typeof timer === 'object' && timer !== null && 'unref' in timer && typeof timer.unref === 'function') {
+                if (
+                    typeof timer === 'object' &&
+                    timer !== null &&
+                    'unref' in timer &&
+                    typeof timer.unref === 'function'
+                ) {
                     timer.unref();
                 }
                 item.timer = timer;

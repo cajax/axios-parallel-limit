@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Adaptive HTTP 429 Backoff & Rate Limiting**: Pass `adaptiveBackoff: true | AdaptiveBackoffOptions` to automatically throttle concurrency (AIMD) on HTTP 429 responses, parse RFC-standard `Retry-After` headers (integer seconds or HTTP-dates), temporarily suspend queue dispatch without dropping requests, and ramp concurrency back up upon consecutive successful requests.
 - **Controller Pause / Resume**: Added `controller.pause(ms)`, `controller.resume()`, `controller.resetAdaptiveBackoff()`, `controller.isPaused`, and `controller.targetConcurrency`.
 - **High-Performance $O(1)$ Scheduling (`PriorityDeque`)**: Replaced `Array.prototype.shift()` and `splice()` with a multi-level double-ended queue. Dispatches tasks in $O(1)$ time, unlinks aborted/timed-out tasks in $O(1)$ constant time, and eliminates array re-indexing overhead under heavy queue depth.
+- **Automated Code Style & Linting**: Configured ESLint (flat config with `@typescript-eslint`) and Prettier with dedicated scripts (`npm run lint`, `npm run lint:fix`, `npm run format`, `npm run format:check`) ensuring strict code quality and uniform formatting.
 - **Interactive Simulator**: Included visual web dashboard (`examples/server.js`) for testing streaming load, burst traffic, and dynamic resizing.
 
 ## [1.1.1] - 2026-06-02

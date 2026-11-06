@@ -34,7 +34,10 @@ export class QueueTimeoutError extends Error {
     readonly config: InternalAxiosRequestConfig;
 
     constructor(config: InternalAxiosRequestConfig, message?: string) {
-        super(message ?? 'Request timed out while waiting in the queue for an available slot (queueTimeout)');
+        super(
+            message ??
+                'Request timed out while waiting in the queue for an available slot (queueTimeout)',
+        );
         this.name = 'QueueTimeoutError';
         this.config = config;
         // Keep `instanceof` working across down-levelled / bundled output.
@@ -179,10 +182,7 @@ export interface AdaptiveBackoffOptions {
     /**
      * Callback invoked whenever consecutive successes ramp concurrency back up.
      */
-    onRampUp?: (info: {
-        concurrency: number;
-        targetConcurrency: number;
-    }) => void;
+    onRampUp?: (info: { concurrency: number; targetConcurrency: number }) => void;
 }
 
 export interface AxiosParallelLimitOptions {
@@ -445,7 +445,9 @@ export function axiosParallelLimit(
     let lastThrottleTime = 0;
 
     const backoffConfig: AdaptiveBackoffOptions | null = options.adaptiveBackoff
-        ? (typeof options.adaptiveBackoff === 'object' ? options.adaptiveBackoff : {})
+        ? typeof options.adaptiveBackoff === 'object'
+            ? options.adaptiveBackoff
+            : {}
         : null;
 
     if (backoffConfig) {
@@ -457,9 +459,10 @@ export function axiosParallelLimit(
 
         const handle429 = (error: unknown): void => {
             const nowTime = Date.now();
-            const rawHeader = error && typeof error === 'object' && (error as any).response
-                ? getHeader((error as any).response.headers, 'retry-after')
-                : undefined;
+            const rawHeader =
+                error && typeof error === 'object' && (error as any).response
+                    ? getHeader((error as any).response.headers, 'retry-after')
+                    : undefined;
             const cooldownMs = parseRetryAfter(rawHeader, fallbackCooldownMs, maxCooldownMs);
 
             consecutiveSuccesses = 0;
@@ -468,7 +471,10 @@ export function axiosParallelLimit(
             const prevConcurrency = limiter.maxConcurrency;
             let newConcurrency = prevConcurrency;
             if (nowTime - lastThrottleTime > 200) {
-                newConcurrency = Math.max(minConcurrency, Math.floor(prevConcurrency * decreaseFactor));
+                newConcurrency = Math.max(
+                    minConcurrency,
+                    Math.floor(prevConcurrency * decreaseFactor),
+                );
                 if (newConcurrency !== prevConcurrency) {
                     limiter.setMaxConcurrency(newConcurrency);
                 }
@@ -535,7 +541,10 @@ export function axiosParallelLimit(
         // preserving this Symbol). Re-wrapping it would nest acquire() inside acquire()
         // — an outer slot held while awaiting an inner one — which deadlocks the pool
         // once ~maxRequests re-issues pile up. Reuse the existing wrapper instead.
-        if (typeof originalAdapter === 'function' && (originalAdapter as TaggedAdapter)[WRAPPED] === true) {
+        if (
+            typeof originalAdapter === 'function' &&
+            (originalAdapter as TaggedAdapter)[WRAPPED] === true
+        ) {
             return config;
         }
 
@@ -618,7 +627,7 @@ async function runOriginalAdapter(
                 try {
                     // @ts-ignore - getAdapter is not in all type definitions yet but exists in runtime
                     adapter = axios.getAdapter(adapterNameOrFunc);
-                } catch (err) {
+                } catch {
                     // Adapter not supported or not found
                     continue;
                 }
@@ -628,7 +637,10 @@ async function runOriginalAdapter(
                 try {
                     return await adapter(adapterConfig);
                 } catch (err: any) {
-                    if (err && (err.code === 'ERR_ADAPTER_NOT_SUPPORTED' || err.code === 'ERR_NOT_SUPPORT')) {
+                    if (
+                        err &&
+                        (err.code === 'ERR_ADAPTER_NOT_SUPPORTED' || err.code === 'ERR_NOT_SUPPORT')
+                    ) {
                         continue;
                     }
                     throw err;

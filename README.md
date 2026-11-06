@@ -43,9 +43,9 @@ const controller = axiosParallelLimit(http, { maxRequests: 5 });
 
 // Dispatch requests as usual: at most 5 run concurrently; the rest queue
 for (let i = 0; i < 20; i++) {
-  http.get(`/items/${i}`).then((res) => {
-    console.log(`Item ${i} loaded:`, res.data);
-  });
+    http.get(`/items/${i}`).then((res) => {
+        console.log(`Item ${i} loaded:`, res.data);
+    });
 }
 ```
 
@@ -57,9 +57,9 @@ for (let i = 0; i < 20; i++) {
 
 ```typescript
 const controller = axiosParallelLimit(http, {
-  maxRequests: 5,
-  maxQueueSize: 100,
-  queueTimeout: 5000,
+    maxRequests: 5,
+    maxQueueSize: 100,
+    queueTimeout: 5000,
 });
 
 // 1. Inspect live counts
@@ -77,18 +77,18 @@ console.log(`Cancelled ${cancelledCount} waiting requests`);
 
 ### Controller API Reference
 
-| Property / Method | Type | Description |
-| :--- | :--- | :--- |
-| `controller.activeCount` | `number` (read-only) | Number of requests currently executing in-flight. |
-| `controller.pendingCount` | `number` (read-only) | Number of requests currently parked in the queue waiting for a free slot. |
-| `controller.maxRequests` | `number` (read-only) | Current maximum concurrency limit. |
-| `controller.targetConcurrency` | `number` (read-only) | Target maximum concurrency limit configured at initialization or via manual override. |
-| `controller.isPaused` | `boolean` (read-only) | Whether queue dispatch is currently paused in a cooldown window. |
-| `controller.setMaxConcurrency(newLimit)` | `(limit: number) => void` | Updates concurrency at runtime. If increased, waiting tasks are immediately dispatched into newly freed slots. |
-| `controller.clearQueue(reason?)` | `(reason?: unknown) => number` | Rejects and cancels all requests currently waiting in the queue. In-flight requests are unaffected. Returns count of cleared tasks. |
-| `controller.pause(durationMs)` | `(durationMs: number) => void` | Temporarily suspends queue dispatch for `durationMs`. In-flight requests finish normally. |
-| `controller.resume()` | `() => void` | Immediately resumes queue dispatch if paused. |
-| `controller.resetAdaptiveBackoff()` | `() => void` | Restores concurrency to `targetConcurrency` and clears any active pause cooldown. |
+| Property / Method                        | Type                           | Description                                                                                                                         |
+| :--------------------------------------- | :----------------------------- | :---------------------------------------------------------------------------------------------------------------------------------- |
+| `controller.activeCount`                 | `number` (read-only)           | Number of requests currently executing in-flight.                                                                                   |
+| `controller.pendingCount`                | `number` (read-only)           | Number of requests currently parked in the queue waiting for a free slot.                                                           |
+| `controller.maxRequests`                 | `number` (read-only)           | Current maximum concurrency limit.                                                                                                  |
+| `controller.targetConcurrency`           | `number` (read-only)           | Target maximum concurrency limit configured at initialization or via manual override.                                               |
+| `controller.isPaused`                    | `boolean` (read-only)          | Whether queue dispatch is currently paused in a cooldown window.                                                                    |
+| `controller.setMaxConcurrency(newLimit)` | `(limit: number) => void`      | Updates concurrency at runtime. If increased, waiting tasks are immediately dispatched into newly freed slots.                      |
+| `controller.clearQueue(reason?)`         | `(reason?: unknown) => number` | Rejects and cancels all requests currently waiting in the queue. In-flight requests are unaffected. Returns count of cleared tasks. |
+| `controller.pause(durationMs)`           | `(durationMs: number) => void` | Temporarily suspends queue dispatch for `durationMs`. In-flight requests finish normally.                                           |
+| `controller.resume()`                    | `() => void`                   | Immediately resumes queue dispatch if paused.                                                                                       |
+| `controller.resetAdaptiveBackoff()`      | `() => void`                   | Restores concurrency to `targetConcurrency` and clears any active pause cooldown.                                                   |
 
 ---
 
@@ -113,6 +113,7 @@ http.get('/user/checkout', { priority: 10 });
 ### High-Throughput O(1) Scheduling (`PriorityDeque`)
 
 The queue is powered by a multi-level double-ended queue (`PriorityDeque`):
+
 - **$O(1)$ Enqueue & Dequeue**: Bypasses `Array.prototype.shift()`, preventing array memory copies and V8 GC pressure under high concurrency.
 - **$O(1)$ Unlinking on Abort/Timeout**: When a queued request times out or is aborted via `AbortSignal`, it unlinks its node in $O(1)$ constant time without scanning the queue.
 - **Sub-Millisecond Overhead**: Handles 40,000+ operations in under 20ms.
@@ -126,28 +127,31 @@ Unbounded concurrency queues are dangerous in production: if a downstream servic
 `axios-parallel-limit` provides two mechanisms to establish a reliable bulkhead:
 
 ### 1. `queueTimeout` (Bound Wait Time)
+
 The maximum time (ms) a request may spend **waiting in the queue** before acquiring a slot. If not dispatched within this window, it is removed from the queue without executing and its promise rejects with `QueueTimeoutError`.
 
 ```typescript
 axiosParallelLimit(http, {
-  maxRequests: 5,
-  queueTimeout: 3000, // wait at most 3 seconds in queue
+    maxRequests: 5,
+    queueTimeout: 3000, // wait at most 3 seconds in queue
 });
 ```
 
-*Note: `queueTimeout` composes with Axios's own `timeout`. `queueTimeout` bounds the queue wait; Axios `timeout` bounds the actual HTTP network exchange once in flight.*
+_Note: `queueTimeout` composes with Axios's own `timeout`. `queueTimeout` bounds the queue wait; Axios `timeout` bounds the actual HTTP network exchange once in flight._
 
 ### 2. `maxQueueSize` (Bound Queue Depth)
+
 A hard limit on the number of waiting requests. When the queue is full, new incoming requests fail fast with `QueueFullError` immediately (load shedding).
 
 ```typescript
 axiosParallelLimit(http, {
-  maxRequests: 5,
-  maxQueueSize: 50, // queue at most 50 requests; 51st rejects immediately
+    maxRequests: 5,
+    maxQueueSize: 50, // queue at most 50 requests; 51st rejects immediately
 });
 ```
 
 ### Per-Request `queueTimeout` Override
+
 Individual calls can override the instance-level queue timeout:
 
 ```typescript
@@ -180,24 +184,27 @@ Enabling `adaptiveBackoff` activates **Additive Increase / Multiplicative Decrea
 
 ```typescript
 const controller = axiosParallelLimit(http, {
-  maxRequests: 10,
-  adaptiveBackoff: {
-    minConcurrency: 1,       // Never drop below 1 concurrent request
-    decreaseFactor: 0.5,      // Halve concurrency upon receiving a 429
-    fallbackCooldownMs: 1500, // Cooldown if Retry-After header is omitted
-    maxCooldownMs: 30000,     // Cap maximum cooldown at 30 seconds
-    successStep: 5,           // Ramp concurrency +1 after 5 consecutive successes
-    onThrottle: ({ retryAfterMs, previousConcurrency, newConcurrency }) => {
-      console.warn(`429 received: throttled ${previousConcurrency} -> ${newConcurrency}, pausing ${retryAfterMs}ms`);
+    maxRequests: 10,
+    adaptiveBackoff: {
+        minConcurrency: 1, // Never drop below 1 concurrent request
+        decreaseFactor: 0.5, // Halve concurrency upon receiving a 429
+        fallbackCooldownMs: 1500, // Cooldown if Retry-After header is omitted
+        maxCooldownMs: 30000, // Cap maximum cooldown at 30 seconds
+        successStep: 5, // Ramp concurrency +1 after 5 consecutive successes
+        onThrottle: ({ retryAfterMs, previousConcurrency, newConcurrency }) => {
+            console.warn(
+                `429 received: throttled ${previousConcurrency} -> ${newConcurrency}, pausing ${retryAfterMs}ms`,
+            );
+        },
+        onRampUp: ({ concurrency, targetConcurrency }) => {
+            console.log(`Recovered: concurrency increased to ${concurrency}/${targetConcurrency}`);
+        },
     },
-    onRampUp: ({ concurrency, targetConcurrency }) => {
-      console.log(`Recovered: concurrency increased to ${concurrency}/${targetConcurrency}`);
-    },
-  },
 });
 ```
 
 ### How Adaptive Backoff Works:
+
 1. **RFC `Retry-After` Parsing**: Automatically parses both integer seconds (`Retry-After: 10`) and HTTP-date strings (`Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`).
 2. **Queue Suspension Without Drops**: While paused in cooldown, queued requests remain safely parked in the queue without being dropped or rejected.
 3. **Multiplicative Decrease**: Current concurrency limit is halved (or reduced by `decreaseFactor`) down to `minConcurrency`.
@@ -209,17 +216,17 @@ const controller = axiosParallelLimit(http, {
 
 `axiosParallelLimit(axiosInstance, options)` accepts the following options:
 
-| Option | Type | Required | Default | Description |
-| :--- | :--- | :---: | :---: | :--- |
-| `maxRequests` | `number` | **Yes** | — | Concurrency cap (`>= 1`). Maximum simultaneous in-flight requests. |
-| `maxQueueSize` | `number` | No | `unbounded` | Hard upper bound on queue depth (`>= 0`). Rejects with `QueueFullError` when exceeded. |
-| `queueTimeout` | `number` (ms) | No | `disabled` | Maximum wait duration in queue before rejecting with `QueueTimeoutError` (`>= 0`). |
-| `adaptiveBackoff` | `boolean \| AdaptiveBackoffOptions` | No | `false` | Enable automatic 429 rate limiting, `Retry-After` backoff, and AIMD recovery. Pass `true` for defaults or a custom config. |
-| `onActiveCountChange` | `(count: number) => void` | No | — | Triggered whenever in-flight active count changes. |
-| `onPendingCountChange` | `(count: number) => void` | No | — | Triggered whenever queue pending count changes. |
-| `onDispatch` | `(info: QueueEventInfo) => void` | No | — | Called when a request acquires a slot and begins execution (`waitMs` indicates queue wait). |
-| `onQueueTimeout` | `(info: QueueEventInfo) => void` | No | — | Called when a request times out while waiting in queue. |
-| `onQueueOverflow` | `(info: QueueEventInfo) => void` | No | — | Called when a request is rejected because the queue reached `maxQueueSize`. |
+| Option                 | Type                                | Required |   Default   | Description                                                                                                                |
+| :--------------------- | :---------------------------------- | :------: | :---------: | :------------------------------------------------------------------------------------------------------------------------- |
+| `maxRequests`          | `number`                            | **Yes**  |      —      | Concurrency cap (`>= 1`). Maximum simultaneous in-flight requests.                                                         |
+| `maxQueueSize`         | `number`                            |    No    | `unbounded` | Hard upper bound on queue depth (`>= 0`). Rejects with `QueueFullError` when exceeded.                                     |
+| `queueTimeout`         | `number` (ms)                       |    No    | `disabled`  | Maximum wait duration in queue before rejecting with `QueueTimeoutError` (`>= 0`).                                         |
+| `adaptiveBackoff`      | `boolean \| AdaptiveBackoffOptions` |    No    |   `false`   | Enable automatic 429 rate limiting, `Retry-After` backoff, and AIMD recovery. Pass `true` for defaults or a custom config. |
+| `onActiveCountChange`  | `(count: number) => void`           |    No    |      —      | Triggered whenever in-flight active count changes.                                                                         |
+| `onPendingCountChange` | `(count: number) => void`           |    No    |      —      | Triggered whenever queue pending count changes.                                                                            |
+| `onDispatch`           | `(info: QueueEventInfo) => void`    |    No    |      —      | Called when a request acquires a slot and begins execution (`waitMs` indicates queue wait).                                |
+| `onQueueTimeout`       | `(info: QueueEventInfo) => void`    |    No    |      —      | Called when a request times out while waiting in queue.                                                                    |
+| `onQueueOverflow`      | `(info: QueueEventInfo) => void`    |    No    |      —      | Called when a request is rejected because the queue reached `maxQueueSize`.                                                |
 
 `QueueEventInfo` shape: `{ config: InternalAxiosRequestConfig, waitMs: number, queueSize: number }`.
 
@@ -229,34 +236,34 @@ const controller = axiosParallelLimit(http, {
 
 The library exports dedicated error classes and type guards:
 
-| Error Class | `code` | Type Guard | Trigger Condition |
-| :--- | :--- | :--- | :--- |
-| `QueueTimeoutError` | `'ERR_QUEUE_TIMEOUT'` | `isQueueTimeoutError(err)` | Request spent longer than `queueTimeout` waiting for an available slot. |
-| `QueueFullError` | `'ERR_QUEUE_FULL'` | `isQueueFullError(err)` | Request rejected immediately because queue reached `maxQueueSize`. |
-| `CanceledError` | `'ERR_CANCELED'` | `axios.isCancel(err)` | Request was cancelled via `AbortSignal`, `CancelToken`, or `controller.clearQueue()`. |
+| Error Class         | `code`                | Type Guard                 | Trigger Condition                                                                     |
+| :------------------ | :-------------------- | :------------------------- | :------------------------------------------------------------------------------------ |
+| `QueueTimeoutError` | `'ERR_QUEUE_TIMEOUT'` | `isQueueTimeoutError(err)` | Request spent longer than `queueTimeout` waiting for an available slot.               |
+| `QueueFullError`    | `'ERR_QUEUE_FULL'`    | `isQueueFullError(err)`    | Request rejected immediately because queue reached `maxQueueSize`.                    |
+| `CanceledError`     | `'ERR_CANCELED'`      | `axios.isCancel(err)`      | Request was cancelled via `AbortSignal`, `CancelToken`, or `controller.clearQueue()`. |
 
 ### Handling Example:
 
 ```typescript
 import {
-  axiosParallelLimit,
-  isQueueTimeoutError,
-  isQueueFullError,
+    axiosParallelLimit,
+    isQueueTimeoutError,
+    isQueueFullError,
 } from '@cajax/axios-parallel-limit';
 import axios from 'axios';
 
 try {
-  await http.get('/resource');
+    await http.get('/resource');
 } catch (err) {
-  if (isQueueTimeoutError(err)) {
-    console.warn(`Queue wait timed out for ${err.config.url}`);
-  } else if (isQueueFullError(err)) {
-    console.warn(`Queue full, request shed: ${err.config.url}`);
-  } else if (axios.isCancel(err)) {
-    console.log('Request was cancelled');
-  } else if (axios.isAxiosError(err)) {
-    console.error(`HTTP/Network error: ${err.response?.status}`);
-  }
+    if (isQueueTimeoutError(err)) {
+        console.warn(`Queue wait timed out for ${err.config.url}`);
+    } else if (isQueueFullError(err)) {
+        console.warn(`Queue full, request shed: ${err.config.url}`);
+    } else if (axios.isCancel(err)) {
+        console.log('Request was cancelled');
+    } else if (axios.isAxiosError(err)) {
+        console.error(`HTTP/Network error: ${err.response?.status}`);
+    }
 }
 ```
 
@@ -274,6 +281,7 @@ npm run dev
 ```
 
 Open your browser to `http://localhost:3000` to interact with:
+
 - Live streaming request ingestion (1–50 req/sec).
 - Real-time priority queue jumping visualizer.
 - Dynamic concurrency resizing sliders.
@@ -288,7 +296,7 @@ To maintain rock-solid stability and prevent regressions:
 
 - **100% Test Coverage**: Every feature, option, edge case, and error path must be covered by automated tests (`npm test`).
 - **Documented Before Merge**: Any newly added configuration option, method, error code, or behavioral change **must be documented in this `README.md`** with working TypeScript code samples.
-- **Strict Linting & Types**: Zero compiler warnings or missing types (`npm run lint`).
+- **Strict Linting & Formatting**: Zero compiler warnings or code style issues (`npm run lint`, `npm run format:check`). Automated corrections are available via `npm run lint:fix` and `npm run format`.
 
 ---
 

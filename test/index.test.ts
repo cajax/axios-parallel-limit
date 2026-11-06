@@ -61,7 +61,7 @@ describe('axiosParallelLimit', () => {
 
         // We need to delay the response to ensure queueing happens.
         mock.onGet('/delay').reply(async () => {
-            await new Promise(r => setTimeout(r, 50));
+            await new Promise((r) => setTimeout(r, 50));
             return [200, 'ok'];
         });
 
@@ -75,7 +75,7 @@ describe('axiosParallelLimit', () => {
         expect(onPendingCountChange).toHaveBeenCalled();
 
         // Check if we saw pending count > 0
-        const pendingCounts = onPendingCountChange.mock.calls.map(c => c[0]);
+        const pendingCounts = onPendingCountChange.mock.calls.map((c) => c[0]);
         expect(Math.max(...pendingCounts)).toBeGreaterThan(0);
     });
 
@@ -92,12 +92,12 @@ describe('axiosParallelLimit', () => {
 
         axiosParallelLimit(instance, {
             maxRequests,
-            onActiveCountChange: (count) => activeCounts.push(count)
+            onActiveCountChange: (count) => activeCounts.push(count),
         });
 
         // Each request takes 50ms
         mock.onGet('/test').reply(async () => {
-            await new Promise(r => setTimeout(r, 50));
+            await new Promise((r) => setTimeout(r, 50));
             return [200, 'ok'];
         });
 
@@ -108,7 +108,7 @@ describe('axiosParallelLimit', () => {
         }
 
         // Wait a bit for the first batch to start
-        await new Promise(r => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 10));
 
         // Should be saturated at 2
         expect(activeCounts[activeCounts.length - 1]).toBe(2);
@@ -124,7 +124,7 @@ describe('axiosParallelLimit', () => {
         expect(maxSeen).toBe(2);
 
         // Verify we saw saturation multiple times (indicating sustained load)
-        const saturatedCounts = activeCounts.filter(c => c === 2).length;
+        const saturatedCounts = activeCounts.filter((c) => c === 2).length;
         expect(saturatedCounts).toBeGreaterThan(1);
     });
 
@@ -145,14 +145,14 @@ describe('axiosParallelLimit', () => {
             adapterInvocations++;
             concurrentInvocations++;
             maxConcurrent = Math.max(maxConcurrent, concurrentInvocations);
-            await new Promise(r => setTimeout(r, 40));
+            await new Promise((r) => setTimeout(r, 40));
             concurrentInvocations--;
             return {
                 data: 'ok',
                 status: 200,
                 statusText: 'OK',
                 headers: {},
-                config: cfg
+                config: cfg,
             };
         };
 
@@ -177,7 +177,7 @@ describe('axiosParallelLimit', () => {
         mock.onGet(/\/job\/(.+)/).reply(async (config) => {
             const id = config.url?.split('/').pop() || '';
             dispatchOrder.push(id);
-            await new Promise(r => setTimeout(r, 40));
+            await new Promise((r) => setTimeout(r, 40));
             return [200, id];
         });
 
@@ -185,7 +185,7 @@ describe('axiosParallelLimit', () => {
 
         // Fire initial request that immediately holds the 1 slot
         const pInitial = instance.get('/job/initial');
-        await new Promise(r => setTimeout(r, 5));
+        await new Promise((r) => setTimeout(r, 5));
 
         // Queue requests with different priorities
         const pLow = instance.get('/job/low', { priority: 0 });
@@ -202,7 +202,7 @@ describe('axiosParallelLimit', () => {
         let active = 0;
         mock.onGet('/slow').reply(async () => {
             active++;
-            await new Promise(r => setTimeout(r, 60));
+            await new Promise((r) => setTimeout(r, 60));
             active--;
             return [200, 'ok'];
         });
@@ -216,7 +216,7 @@ describe('axiosParallelLimit', () => {
         const p2 = instance.get('/slow');
         const p3 = instance.get('/slow');
 
-        await new Promise(r => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 10));
 
         expect(controller.activeCount).toBe(1);
         expect(controller.pendingCount).toBe(2);
@@ -233,5 +233,6 @@ describe('axiosParallelLimit', () => {
         expect(r3.status).toBe('rejected');
 
         expect(controller.activeCount).toBe(0);
+        expect(active).toBe(0);
     });
 });

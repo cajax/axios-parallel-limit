@@ -17,9 +17,12 @@
     }
   },
   "scripts": {
-    "dev": "node examples/server.js",
+    "dev": "npm run build && node examples/server.js",
     "start": "node examples/server.js",
-    "lint": "tsc --noEmit",
+    "lint": "tsc --noEmit && eslint src test",
+    "lint:fix": "eslint src test --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" README.md",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" README.md",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "build": "tsup"
   },
@@ -50,10 +53,14 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^24.10.1",
     "axios-mock-adapter": "^2.1.0",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.8",
     "jest": "^30.2.0",
+    "prettier": "^3.9.10",
     "ts-jest": "^29.4.5",
     "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.1"
   },
   "directories": {
     "example": "examples",

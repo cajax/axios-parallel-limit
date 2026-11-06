@@ -339,7 +339,11 @@ describe('BoundedLimiter — cancellation', () => {
 describe('BoundedLimiter — invariants', () => {
     test('mixed workload keeps active/pending counts and event payloads exact', async () => {
         jest.useFakeTimers();
-        const { limiter, events } = makeLimiter({ maxConcurrency: 1, maxQueueSize: 3, queueTimeout: 1000 });
+        const { limiter, events } = makeLimiter({
+            maxConcurrency: 1,
+            maxQueueSize: 3,
+            queueTimeout: 1000,
+        });
         const cancelE = makeCancellation();
 
         const a = track(limiter.acquire('a'));
@@ -425,7 +429,9 @@ describe('BoundedLimiter — invariants', () => {
         expect(() => makeLimiter({ maxConcurrency: 2, queueTimeout: NaN })).toThrow(RangeError);
 
         // Valid boundary zero for queue size/timeout should not throw
-        expect(() => makeLimiter({ maxConcurrency: 2, maxQueueSize: 0, queueTimeout: 0 })).not.toThrow();
+        expect(() =>
+            makeLimiter({ maxConcurrency: 2, maxQueueSize: 0, queueTimeout: 0 }),
+        ).not.toThrow();
     });
 
     test('dispatches higher priority queued tasks before lower priority tasks', async () => {
@@ -476,7 +482,7 @@ describe('BoundedLimiter — invariants', () => {
     });
 
     test('dynamically adjusts concurrency with setMaxConcurrency', async () => {
-        const { limiter, events } = makeLimiter({ maxConcurrency: 1 });
+        const { limiter } = makeLimiter({ maxConcurrency: 1 });
 
         const a = track(limiter.acquire('a'));
         await flushUntil(() => a.granted, 'a granted');

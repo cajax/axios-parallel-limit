@@ -366,7 +366,14 @@ var BoundedLimiter = class {
     }
     return new Promise((resolve, reject) => {
       const priority = typeof opts.priority === "number" && Number.isFinite(opts.priority) ? opts.priority : 0;
-      const item = { context, priority, enqueuedAt: now(), settled: false, resolve, reject };
+      const item = {
+        context,
+        priority,
+        enqueuedAt: now(),
+        settled: false,
+        resolve,
+        reject
+      };
       const timeout = typeof opts.queueTimeout === "number" ? opts.queueTimeout : this.options.queueTimeout;
       if (timeout !== void 0) {
         const timer = setTimeout(() => this.onTimeout(item), timeout);
@@ -389,7 +396,9 @@ var QUEUE_TIMEOUT_CODE = "ERR_QUEUE_TIMEOUT";
 var QUEUE_FULL_CODE = "ERR_QUEUE_FULL";
 var QueueTimeoutError = class _QueueTimeoutError extends Error {
   constructor(config, message) {
-    super(message ?? "Request timed out while waiting in the queue for an available slot (queueTimeout)");
+    super(
+      message ?? "Request timed out while waiting in the queue for an available slot (queueTimeout)"
+    );
     /** Stable, machine-checkable discriminant. */
     this.code = QUEUE_TIMEOUT_CODE;
     this.name = "QueueTimeoutError";
@@ -532,7 +541,10 @@ function axiosParallelLimit(axiosInstance, options) {
       const prevConcurrency = limiter.maxConcurrency;
       let newConcurrency = prevConcurrency;
       if (nowTime - lastThrottleTime > 200) {
-        newConcurrency = Math.max(minConcurrency, Math.floor(prevConcurrency * decreaseFactor));
+        newConcurrency = Math.max(
+          minConcurrency,
+          Math.floor(prevConcurrency * decreaseFactor)
+        );
         if (newConcurrency !== prevConcurrency) {
           limiter.setMaxConcurrency(newConcurrency);
         }
@@ -646,7 +658,7 @@ async function runOriginalAdapter(originalAdapter, adapterConfig) {
       } else if (typeof adapterNameOrFunc === "string") {
         try {
           adapter = axios.getAdapter(adapterNameOrFunc);
-        } catch (err) {
+        } catch {
           continue;
         }
       }

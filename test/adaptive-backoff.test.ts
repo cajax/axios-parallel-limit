@@ -1,10 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import MockAdapter from 'axios-mock-adapter';
-import {
-    axiosParallelLimit,
-    parseRetryAfter,
-    AxiosParallelLimitController,
-} from '../src/index.js';
+import { axiosParallelLimit, parseRetryAfter } from '../src/index.js';
 
 describe('Adaptive HTTP 429 Backoff & Rate Limiting', () => {
     let instance: AxiosInstance;
@@ -97,7 +93,6 @@ describe('Adaptive HTTP 429 Backoff & Rate Limiting', () => {
         });
 
         test('pauses queue dispatch during cooldown and resumes on expiry', async () => {
-            let activeCount = 0;
             const executionOrder: string[] = [];
 
             mock.onGet('/first').reply(429, {}, { 'retry-after': '1' }); // 1 sec
