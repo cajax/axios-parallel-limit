@@ -47,6 +47,7 @@
   "homepage": "https://github.com/cajax/axios-parallel-limit",
   "license": "MIT",
   "dependencies": {
+    "@cajax/bulkhead-limit": "^0.1.0",
     "axios": "^1.13.2"
   },
   "devDependencies": {

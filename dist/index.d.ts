@@ -1,77 +1,5 @@
 import { InternalAxiosRequestConfig, AxiosInstance } from 'axios';
-
-/** Releases the held slot. Idempotent; pulls the next queued task. */
-type ReleaseFn = () => void;
-interface QueueNode<T> {
-    item: QueueItem<T>;
-    prev: QueueNode<T> | null;
-    next: QueueNode<T> | null;
-    bucket?: PriorityBucket<T>;
-}
-interface QueueItem<T> {
-    context: T;
-    priority: number;
-    enqueuedAt: number;
-    timer?: ReturnType<typeof setTimeout>;
-    detachAbort?: () => void;
-    /**
-     * `true` once the task has left the queue via ANY path (dispatch, timeout,
-     * cancel). Guarantees exactly-once settlement: the race winner flips it and
-     * the loser becomes a no-op.
-     */
-    settled: boolean;
-    resolve: (release: ReleaseFn) => void;
-    reject: (err: unknown) => void;
-    node?: QueueNode<T>;
-}
-/**
- * Internal bucket for a specific priority level.
- * All items in a bucket share identical priority and are processed in strict FIFO order.
- */
-declare class PriorityBucket<T> {
-    readonly priority: number;
-    head: QueueNode<T> | null;
-    tail: QueueNode<T> | null;
-    size: number;
-    constructor(priority: number);
-    push(item: QueueItem<T>): QueueNode<T>;
-    shift(): QueueItem<T> | undefined;
-    remove(node: QueueNode<T>): void;
-}
-/**
- * High-performance multi-level Priority Deque.
- * Uses bucketed doubly-linked lists to ensure:
- * - O(1) enqueue for all items (Map lookup + tail append)
- * - O(1) dequeue from highest priority bucket
- * - O(1) unlinking on cancellation / queueTimeout
- */
-declare class PriorityDeque<T> {
-    private buckets;
-    private bucketMap;
-    private _size;
-    get size(): number;
-    get isEmpty(): boolean;
-    /**
-     * Inserts an item into the deque respecting its priority.
-     * Higher priority items precede lower priority items.
-     * Items of identical priority preserve strict FIFO ordering.
-     */
-    insert(item: QueueItem<T>): QueueNode<T>;
-    private insertBucket;
-    /**
-     * Remove and return the highest priority item from the front of the queue in O(1) time.
-     */
-    shift(): QueueItem<T> | undefined;
-    /**
-     * Remove a specific node from anywhere in the queue in O(1) time (used for timeout and cancellation).
-     * Returns true if the node was unlinked, false if already removed.
-     */
-    remove(node?: QueueNode<T>): boolean;
-    /**
-     * Clear all items from the queue and return them as an array.
-     */
-    clear(): QueueItem<T>[];
-}
+export { PriorityDeque, QueueNode } from '@cajax/bulkhead-limit';
 
 /**
  * Thrown when a request waits longer than `queueTimeout` for a free slot and is
@@ -314,4 +242,4 @@ interface AxiosParallelLimitController {
 declare function parseRetryAfter(header: unknown, fallbackMs: number, maxMs: number): number;
 declare function axiosParallelLimit(axiosInstance: AxiosInstance, options: AxiosParallelLimitOptions): AxiosParallelLimitController;
 
-export { type AdaptiveBackoffOptions, type AxiosParallelLimitController, type AxiosParallelLimitOptions, PriorityDeque, type QueueEventInfo, QueueFullError, type QueueNode, QueueTimeoutError, axiosParallelLimit, isQueueFullError, isQueueTimeoutError, parseRetryAfter };
+export { type AdaptiveBackoffOptions, type AxiosParallelLimitController, type AxiosParallelLimitOptions, type QueueEventInfo, QueueFullError, QueueTimeoutError, axiosParallelLimit, isQueueFullError, isQueueTimeoutError, parseRetryAfter };
