@@ -8,11 +8,19 @@ cd "$(dirname "$0")"
 
 echo "Starting release process..."
 
-# 1. Run tests
+# 1. Check code formatting
+echo "Checking code formatting..."
+npm run format:check
+
+# 2. Lint and type-check
+echo "Running linter and type-checker..."
+npm run lint
+
+# 3. Run tests
 echo "Running tests..."
 npm test
 
-# 2. Build the project
+# 4. Build the project
 echo "Building project..."
 npm run build
 
