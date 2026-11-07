@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Automated Code Style & Linting**: Configured ESLint (flat config with `@typescript-eslint`) and Prettier with dedicated scripts (`npm run lint`, `npm run lint:fix`, `npm run format`, `npm run format:check`) ensuring strict code quality and uniform formatting.
 - **Decoupled Limiter Core (`@cajax/bulkhead-limit`)**: Integrated the decoupled `@cajax/bulkhead-limit` library for core bulkhead concurrency management, priority queue scheduling ($O(1)$ `PriorityDeque`), and RFC 9110 `Retry-After` parsing.
 - **Contributor & Issue Templates**: Added GitHub issue templates (`.github/ISSUE_TEMPLATE/bug_report.md`, `.github/ISSUE_TEMPLATE/feature_request.md`) and a pull request template (`.github/pull_request_template.md`) enforcing Definition of Done checklists (tests, linting, formatting, docs).
+- **Automated CI Matrix**: Added GitHub Actions workflow (`.github/workflows/ci.yml`) matrix-testing across Node.js 18, 20, and 22 on all PRs and pushes to `main` (`npm run lint`, `npm run format:check`, `npm test`, `npm run build`).
 - **Release Verification**: Updated `release.sh` to require code formatting (`npm run format:check`) and linting (`npm run lint`) before testing, building, and publishing.
 - **Interactive Simulator**: Included visual web dashboard (`examples/server.js`) for testing streaming load, burst traffic, and dynamic resizing.
 
