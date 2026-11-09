@@ -213,6 +213,157 @@ const controller = axiosParallelLimit(http, {
 
 ---
 
+## Controller Recipes & Production Patterns
+
+### Recipe 1: Custom Adaptive Rate Limiting & Interceptor Coordination
+
+While the built-in `adaptiveBackoff` handles standard RFC `Retry-After` headers automatically, you can also build custom AIMD (Additive Increase / Multiplicative Decrease) algorithms or coordinate with custom headers (e.g. `X-RateLimit-Remaining`):
+
+```typescript
+import axios from 'axios';
+import { axiosParallelLimit } from '@cajax/axios-parallel-limit';
+
+const http = axios.create({ baseURL: 'https://api.github.com' });
+const controller = axiosParallelLimit(http, {
+    maxRequests: 10,
+    maxQueueSize: 100,
+    queueTimeout: 10000,
+});
+
+http.interceptors.response.use(
+    (response) => {
+        // Proactively throttle before running into 429 errors
+        const remaining = parseInt(response.headers['x-ratelimit-remaining'] ?? '100', 10);
+        if (remaining < 10 && controller.maxRequests > 2) {
+            console.warn('Approaching rate limit: scaling concurrency down to 2');
+            controller.setMaxConcurrency(2);
+        } else if (remaining > 50 && controller.maxRequests < 10) {
+            controller.setMaxConcurrency(10);
+        }
+        return response;
+    },
+    async (error) => {
+        if (error.response?.status === 429) {
+            const rawHeader = error.response.headers['retry-after'];
+            const delaySec = parseInt(rawHeader ?? '5', 10);
+            const cooldownMs = delaySec * 1000;
+
+            console.warn(`429 received! Halving concurrency and pausing for ${delaySec}s`);
+
+            // 1. Temporarily pause queue dispatch without dropping pending tasks
+            controller.pause(cooldownMs);
+
+            // 2. Halve concurrency (Multiplicative Decrease)
+            const nextConcurrency = Math.max(1, Math.floor(controller.maxRequests / 2));
+            controller.setMaxConcurrency(nextConcurrency);
+        }
+        return Promise.reject(error);
+    },
+);
+```
+
+### Recipe 2: Route Transitions & User Logout Queue Shedding (`clearQueue`)
+
+In Single-Page Applications (React, Vue, Svelte, Next.js), background queries from an unmounted view should not hold up network bandwidth for the newly mounted route. Use `controller.clearQueue()` during route cleanup:
+
+```typescript
+import { useEffect } from 'react';
+import axios from 'axios';
+import { axiosParallelLimit } from '@cajax/axios-parallel-limit';
+
+const http = axios.create();
+export const apiController = axiosParallelLimit(http, { maxRequests: 4 });
+
+export function DashboardComponent() {
+    useEffect(() => {
+        // Kick off batch of dashboard requests
+        http.get('/analytics/heavy-report-1');
+        http.get('/analytics/heavy-report-2');
+        http.get('/analytics/heavy-report-3');
+
+        return () => {
+            // When navigating away, cancel all waiting tasks immediately
+            const purgedCount = apiController.clearQueue('Dashboard route unmounted');
+            if (purgedCount > 0) {
+                console.log(`Cancelled ${purgedCount} queued background requests`);
+            }
+        };
+    }, []);
+
+    return <div>Dashboard Content</div>;
+}
+```
+
+### Recipe 3: Network & Hardware Elasticity (`setMaxConcurrency`)
+
+Dynamically tune request concurrency based on client network conditions, device battery status, or server load metrics:
+
+```typescript
+// Dynamically adjust concurrency based on Network Information API
+if (typeof navigator !== 'undefined' && 'connection' in navigator) {
+    const connection = (navigator as any).connection;
+
+    function adaptToNetwork() {
+        switch (connection.effectiveType) {
+            case 'slow-2g':
+            case '2g':
+                controller.setMaxConcurrency(1); // Strict single-flight mode
+                break;
+            case '3g':
+                controller.setMaxConcurrency(3);
+                break;
+            case '4g':
+            default:
+                controller.setMaxConcurrency(8);
+                break;
+        }
+    }
+
+    connection.addEventListener('change', adaptToNetwork);
+    adaptToNetwork();
+}
+```
+
+### Recipe 4: Observability, Metrics & Telemetry Dashboard
+
+Export real-time concurrency metrics directly into Prometheus, DataDog, StatsD, or application health endpoints:
+
+```typescript
+import express from 'express';
+import { axiosParallelLimit } from '@cajax/axios-parallel-limit';
+
+const app = express();
+const controller = axiosParallelLimit(http, {
+    maxRequests: 16,
+    onActiveCountChange: (active) => {
+        metricsClient.gauge('http.concurrency.active', active);
+    },
+    onPendingCountChange: (pending) => {
+        metricsClient.gauge('http.concurrency.pending', pending);
+    },
+    onQueueOverflow: ({ config, queueSize }) => {
+        metricsClient.increment('http.queue.overflow', { url: config.url });
+    },
+    onQueueTimeout: ({ config, waitMs }) => {
+        metricsClient.increment('http.queue.timeout', { url: config.url });
+    },
+});
+
+// Real-time health / telemetry endpoint
+app.get('/metrics/concurrency', (req, res) => {
+    res.json({
+        activeRequests: controller.activeCount,
+        pendingQueue: controller.pendingCount,
+        maxConcurrency: controller.maxRequests,
+        targetConcurrency: controller.targetConcurrency,
+        isPaused: controller.isPaused,
+        status: controller.isPaused ? 'throttled' : 'healthy',
+    });
+});
+```
+
+---
+
 ## Configuration Options
 
 `axiosParallelLimit(axiosInstance, options)` accepts the following options:
