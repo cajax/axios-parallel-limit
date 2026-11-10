@@ -330,9 +330,11 @@ Export real-time concurrency metrics directly into Prometheus, DataDog, StatsD, 
 
 ```typescript
 import express from 'express';
+import axios from 'axios';
 import { axiosParallelLimit } from '@cajax/axios-parallel-limit';
 
 const app = express();
+const http = axios.create();
 const controller = axiosParallelLimit(http, {
     maxRequests: 16,
     onActiveCountChange: (active) => {
