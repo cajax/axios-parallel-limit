@@ -7,18 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-09
+
 ### Added
 
 - **`AxiosParallelLimitController`**: `axiosParallelLimit` now returns a controller handle with runtime observability and management capabilities:
   - `activeCount`: current number of in-flight requests.
   - `pendingCount`: current number of requests waiting in the queue.
   - `maxRequests`: current concurrency cap.
+  - `targetConcurrency`: target concurrency cap configured at initialization or updated via `setMaxConcurrency`.
+  - `isPaused`: boolean indicating whether the queue is currently suspended during a cooldown.
   - `setMaxConcurrency(limit: number)`: dynamically resize concurrency at runtime without losing queued tasks.
   - `clearQueue(reason?)`: purge and reject all pending queued requests cleanly (e.g. on user logout or page transition).
+  - `pause(durationMs)`: temporarily suspend queue dispatch for `durationMs`.
+  - `resume()`: immediately resume queue dispatch if paused.
+  - `resetAdaptiveBackoff()`: restores concurrency to `targetConcurrency` and clears cooldown.
+- **Controller Documentation & Production Recipes**: Added comprehensive documentation and user-facing code recipes covering manual/custom AIMD rate limiting, SPA route transition queue flushing, network elasticity scaling, and telemetry monitoring.
 - **Per-Request Priority Queueing**: Pass `priority?: number` on individual request configs (`axios.get(url, { priority: 10 })`). High-priority requests leapfrog lower-priority background tasks in the queue; requests of identical priority preserve strict FIFO ordering.
 - **Strict Input Validation**: Fail-fast validation of initialization options (`maxRequests >= 1`, `maxQueueSize >= 0`, `queueTimeout >= 0`) throwing typed `RangeError` / `TypeError`.
 - **Adaptive HTTP 429 Backoff & Rate Limiting**: Pass `adaptiveBackoff: true | AdaptiveBackoffOptions` to automatically throttle concurrency (AIMD) on HTTP 429 responses, parse RFC-standard `Retry-After` headers (integer seconds or HTTP-dates), temporarily suspend queue dispatch without dropping requests, and ramp concurrency back up upon consecutive successful requests.
-- **Controller Pause / Resume**: Added `controller.pause(ms)`, `controller.resume()`, `controller.resetAdaptiveBackoff()`, `controller.isPaused`, and `controller.targetConcurrency`.
 - **High-Performance $O(1)$ Scheduling (`PriorityDeque`)**: Replaced `Array.prototype.shift()` and `splice()` with a multi-level double-ended queue. Dispatches tasks in $O(1)$ time, unlinks aborted/timed-out tasks in $O(1)$ constant time, and eliminates array re-indexing overhead under heavy queue depth.
 - **Automated Code Style & Linting**: Configured ESLint (flat config with `@typescript-eslint`) and Prettier with dedicated scripts (`npm run lint`, `npm run lint:fix`, `npm run format`, `npm run format:check`) ensuring strict code quality and uniform formatting.
 - **Decoupled Limiter Core (`@cajax/bulkhead-limit`)**: Integrated the decoupled `@cajax/bulkhead-limit` library for core bulkhead concurrency management, priority queue scheduling ($O(1)$ `PriorityDeque`), and RFC 9110 `Retry-After` parsing.
